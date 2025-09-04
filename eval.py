@@ -20,11 +20,6 @@ os.environ['MASTER_ADDR'] = 'localhost'
 os.environ['MASTER_PORT'] = '12345'
 torch.multiprocessing.set_sharing_strategy('file_system')
 
-def build_models(cfg):
-    if cfg.NAME == "InterGen":
-        model = InterGen(cfg)
-    return model
-
 def evaluate_matching_score(motion_loaders, file):
     match_score_dict = OrderedDict({})
     R_precision_dict = OrderedDict({})
@@ -397,13 +392,13 @@ if __name__ == '__main__':
         eval_wrapper = EvaluatorModelWrapper(evalmodel_cfg, opt.device)
 
     elif main_opt.dataset_name == "interx":
-        main_opt.data_root = 'data/InterX'
+        main_opt.data_root = 'data/Inter-X_Dataset'
         opt.data_root = main_opt.data_root
-        main_opt.motion_dir = pjoin(main_opt.data_root, 'motions')
-        main_opt.text_dir = pjoin(main_opt.data_root, 'texts_processed')
+        main_opt.motion_dir = pjoin(main_opt.data_root, 'processed/motions')
+        main_opt.text_dir = pjoin(main_opt.data_root, 'processed/texts_processed')
         main_opt.motion_rep = "smpl"
-        main_opt.joints_num = 55 if main_opt.motion_rep == "global" else 56 
-        dim_pose = 12 if main_opt.motion_rep == "global" else 6
+        main_opt.joints_num = 56 
+        dim_pose = 6
         fps = 30
         opt.batch_size = 32
         main_opt.max_motion_length = 150

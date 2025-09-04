@@ -60,17 +60,17 @@ if __name__ == "__main__":
             eval_wrapper = None
     
     elif opt.dataset_name == "interx":
-        opt.data_root = 'data/InterX'
-        opt.motion_dir = pjoin(opt.data_root, 'motions')
-        opt.text_dir = pjoin(opt.data_root, 'texts_processed')
+        opt.data_root = 'data/Inter-X_Dataset'
+        opt.motion_dir = pjoin(opt.data_root, 'processed/motions')
+        opt.text_dir = pjoin(opt.data_root, 'processed/texts_processed')
         opt.motion_rep = "smpl"
-        opt.joints_num = 55 if opt.motion_rep == "global" else 56 
+        opt.joints_num = 56 
+        opt.dim_joint = 6
         opt.max_motion_length = 150
         opt.max_text_len = 35
         opt.unit_length = 4
         
         opt.test_batch_size = 32
-        dim_pose = 12 if opt.motion_rep == "global" else 6
         fps = 30
 
         from data.interx import MotionDatasetV2HHI, Text2MotionDatasetV2HHI, collate_fn
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         if opt.do_eval:
             test_dataset = Text2MotionDatasetV2HHI(opt, 
                                                 pjoin(opt.data_root, 'splits/val.txt'), 
-                                                WordVectorizer(pjoin(opt.data_root, 'glove'), 'hhi_vab'), 
+                                                WordVectorizer(pjoin(opt.data_root, 'processed/glove'), 'hhi_vab'), 
                                                 pjoin(opt.motion_dir, 'val.h5'))
             test_loader = DataLoader(test_dataset, batch_size=opt.test_batch_size, 
                                     num_workers=4, drop_last=True, collate_fn=collate_fn, shuffle=True)

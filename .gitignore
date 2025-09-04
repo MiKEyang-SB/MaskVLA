@@ -165,7 +165,7 @@ checkpoints
 *.mp4
 *.pdf
 data/InterHuman
-data/InterX
+data/Inter-X_Dataset
 data/ntu
 data/body_model/smplx
 

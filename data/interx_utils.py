@@ -48,8 +48,8 @@ class InterxKinematics():
 
 class InterxNormalizerTorch():
     def __init__(self):
-        mean = np.load("data/interx_mean.npy")
-        std = np.load("data/interx_std.npy")
+        mean = np.load("data/stats/interx_mean.npy")
+        std = np.load("data/stats/interx_std.npy")
 
         self.motion_mean = torch.from_numpy(mean).float()
         self.motion_std = torch.from_numpy(std).float()

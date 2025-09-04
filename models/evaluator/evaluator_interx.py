@@ -214,7 +214,7 @@ class MMGeneratedDataset(Dataset):
 def get_motion_loader(batch_size, model, trans, ground_truth_dataset, device, mm_num_samples, mm_num_repeats, file, opt, time_steps, cond_scale, topkr):
     # Currently the configurations of two datasets are almost the same
     start = time.time()
-    w_vectorizer = WordVectorizer(pjoin(opt.data_root, 'glove'), 'hhi_vab')
+    w_vectorizer = WordVectorizer(pjoin(opt.data_root, 'processed/glove'), 'hhi_vab')
     dataset = EvaluationDataset(model, trans, 
                                 w_vectorizer, ground_truth_dataset,
                                 device, 
@@ -240,7 +240,7 @@ def get_dataset_motion_loader(opt, batch_size):
 
         dataset = Text2MotionDatasetV2HHI(opt, 
                                             pjoin(opt.data_root, 'splits/test.txt'), 
-                                            WordVectorizer(pjoin(opt.data_root, 'glove'), 'hhi_vab'), 
+                                            WordVectorizer(pjoin(opt.data_root, 'processed/glove'), 'hhi_vab'), 
                                             pjoin(opt.motion_dir, 'test.h5'))
         dataloader = DataLoader(dataset, batch_size=batch_size, 
                                  num_workers=4, drop_last=True, collate_fn=collate_fn, shuffle=True)

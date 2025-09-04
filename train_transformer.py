@@ -92,12 +92,12 @@ if __name__ == '__main__':
             eval_wrapper = None
     
     elif opt.dataset_name == "interx":
-        opt.data_root = 'data/InterX'
-        opt.motion_dir = pjoin(opt.data_root, 'motions')
-        opt.text_dir = pjoin(opt.data_root, 'texts_processed')
+        opt.data_root = 'data/Inter-X_Dataset'
+        opt.motion_dir = pjoin(opt.data_root, 'processed/motions')
+        opt.text_dir = pjoin(opt.data_root, 'processed/texts_processed')
 
         opt.motion_rep = "smpl"
-        opt.joints_num = 55 if opt.motion_rep == "global" else 56
+        opt.joints_num = 56
         opt.max_motion_length = 150
         opt.max_text_len = 35
         opt.unit_length = 4
@@ -110,7 +110,7 @@ if __name__ == '__main__':
         from models.evaluator.evaluator_interx import EvaluatorModelWrapper
         from utils.word_vectorizer import WordVectorizer
 
-        w_vectorizer = WordVectorizer(pjoin(opt.data_root, 'glove'), 'hhi_vab')
+        w_vectorizer = WordVectorizer(pjoin(opt.data_root, 'processed/glove'), 'hhi_vab')
         train_dataset = Text2MotionDatasetV2HHI(opt, 
                                            pjoin(opt.data_root, 'splits/train.txt'),
                                            w_vectorizer, 
