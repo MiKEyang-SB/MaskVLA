@@ -15,6 +15,54 @@ from models.mask_transformer.transformer_modules import *
 from models.mask_transformer.tools import *
 from torch.distributions.categorical import Categorical
 from positional_encodings.torch_encodings import PositionalEncoding1D, PositionalEncoding2D, PositionalEncoding3D
+from PIL import Image
+from torchvision.transforms import ToPILImage
+from models.mask_transformer.networks.clip_lang_encoder import LangClip
+from models.mask_transformer.networks.resnets import BesoResNetEncoder
+# import hydra
+from utils.logger import LOGGER
+import einops 
+from timm.models.layers import trunc_normal_
+class BaseModel(nn.Module):
+    @property
+    def num_parameters(self):
+        nweights = sum(p.numel() for p in self.parameters())
+        nparams  = sum(1 for _ in self.parameters())
+        return nweights, nparams
+
+
+    @property
+    def num_trainable_parameters(self):
+        nweights = 0
+        nparams = 0
+        for p in self.parameters():          # 不用名字就不必 named_parameters
+            if p.requires_grad:
+                nweights += p.numel()        # 等价于 np.prod(p.size())
+                nparams  += 1
+        return int(nweights), int(nparams)
+
+
+    def prepare_batch(self, batch):
+        device = next(self.parameters()).device
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.to(device)
+        return batch
+    
+    def _init_weights(self, m):#初始化权重参数
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv1d):
+            trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Embedding):
+            trunc_normal_(m.weight, std=.02)
 
 class InputProcess(nn.Module):
     def __init__(self, input_feats, latent_dim):
@@ -37,13 +85,14 @@ class SpaTempPositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.positional_encoding = PositionalEncoding2D(d_model)
     
-    def forward(self, x):
+    def forward(self, x, window_size=10):
         seqlen, bs, input_feats = x.shape
-        x1, sep, x2  = x.split([seqlen//2, 1, seqlen//2])
-        
+        t = window_size//5
+        # x1, sep, x2  = x.split([seqlen//2, 1, seqlen//2])
+        #这里的时空注意力出问题了，到底该怎么办啊
         def add_positional_encoding(x):
             x = x.permute(1,0,2) # [seqen, bs, input_feats] -> [bs, seqen, input_feats]
-            x = x.reshape(x.shape[0], 5, x.shape[1]//5, x.shape[2])
+            x = x.reshape(x.shape[0], t, x.shape[1]//t, x.shape[2])
 
             x = x + self.positional_encoding(x)
 
@@ -52,10 +101,10 @@ class SpaTempPositionalEncoding(nn.Module):
 
             return x
 
-        x1 = add_positional_encoding(x1)
-        x2 = add_positional_encoding(x2)
+        x = add_positional_encoding(x)
+        # x2 = add_positional_encoding(x2)
         
-        x = torch.cat([x1, sep, x2], dim=0)
+        # x = torch.cat([x1, sep, x2], dim=0)
         return self.dropout(x)
 
 class OutputProcess_adaLN(nn.Module):
@@ -193,16 +242,17 @@ class MaskTransformer(nn.Module):
     def parameters_wo_clip(self):
         return [p for name, p in self.named_parameters() if not name.startswith('clip_')]
 
-    def load_and_freeze_clip(self, clip_version):
+    def load_and_freeze_clip(self, clip_version): #ViT-B/32
 
         ##From InterGen
-        clip_model, _ = clip.load(clip_version, device="cpu", jit=False)
+        clip_model, preprocess = clip.load(clip_version, device="cpu", jit=False)
 
         self.clip_token_embedding = clip_model.token_embedding
         self.clip_transformer = clip_model.transformer
         self.clip_positional_embedding = clip_model.positional_embedding
         self.clip_ln_final = clip_model.ln_final
         self.clip_dtype = clip_model.dtype
+        self.preprocess = preprocess
 
         for p in self.clip_transformer.parameters():
             p.requires_grad = False
@@ -251,7 +301,7 @@ class MaskTransformer(nn.Module):
     def trans_forward(self, motion_ids, cond, padding_mask, force_mask=False):
         '''
         :param motion_ids: (b, seqlen)
-        :padding_mask: (b, seqlen), all pad positions are TRUE else FALSE
+        :padding_mask: (b, seqlen), all pad positions are TRUE else FALSE 哪些地方是有效的
         :param cond: (b, embed_dim) for text, (b, num_actions) for action
         :param force_mask: boolean
         :return:
@@ -264,14 +314,14 @@ class MaskTransformer(nn.Module):
         motion_ids = torch.cat((motion_ids[:, :n_tokens//2], 
                                 self.sep_id * torch.ones((bs, 1), device=motion_ids.device, dtype=torch.long),
                                 motion_ids[:, n_tokens//2:]), dim=-1)
-        
-        x = self.token_emb(motion_ids)
+        #中间加一个分隔符(8, 751)
+        x = self.token_emb(motion_ids) #(b, 751, 512)
         
         # (b, seqlen, d) -> (seqlen, b, latent_dim)
         x = self.input_process(x)
         cond = self.cond_emb(cond) #(1, b, latent_dim)
 
-        x = self.position_enc(x)
+        x = self.position_enc(x) #(751, b, latent_dim)
         
         padding_mask = torch.cat([padding_mask[:, :n_tokens//2],
                                 torch.zeros_like(padding_mask[:, 0:1]), 
@@ -281,11 +331,11 @@ class MaskTransformer(nn.Module):
         logits = self.output_process(output, cond) #(seqlen, b, e) -> (b, ntoken, seqlen)
         return logits
 
-    def forward(self, ids, y, m_lens):
+    def forward(self, ids, y, m_lens):#motion, cond, m_lens
         '''
-        :param ids: (b, n)
-        :param y: raw text for cond_mode=text, (b, ) for cond_mode=action
-        :m_lens: (b,)
+        :param ids: (b, n)  #(8, 750)
+        :param y: raw text for cond_mode=text, (b, ) for cond_mode=action 
+        :m_lens: (b,)  #(8,)
         :return:
         '''
 
@@ -293,19 +343,19 @@ class MaskTransformer(nn.Module):
         device = ids.device
 
         # Positions that are PADDED are ALL FALSE
-        max_len = ntokens/2
-        max_len = max_len/self.nbp
+        max_len = ntokens/2  #375
+        max_len = max_len/self.nbp #这是一个人的 75
 
-        non_pad_mask = lengths_to_mask(m_lens, max_len) #(b, n)
-        non_pad_mask = non_pad_mask.repeat(1, self.nbp)
+        non_pad_mask = lengths_to_mask(m_lens, max_len) #(b, max_len * 2)
+        non_pad_mask = non_pad_mask.repeat(1, self.nbp) #(b, max_len * 2 * nbp)
         # print(f">>> Pad mask: {non_pad_mask.reshape(2,2,-1).reshape(2,2,5,-1)}")
 
-        ids = torch.where(non_pad_mask, ids, self.pad_id)
+        ids = torch.where(non_pad_mask, ids, self.pad_id) #(8, 750) 将后面的填充为pad_id
         # print(f">>> Padded ids: {ids.reshape(2,2,-1).reshape(2,2,5,-1)}")
 
         force_mask = False
         if self.cond_mode == 'text':
-            cond_vector = self.encode_text(y)
+            cond_vector = self.encode_text(y)  #(8, 768)
         elif self.cond_mode == 'action':
             cond_vector = self.enc_action(y).to(device).float()
         elif self.cond_mode == 'uncond':
@@ -318,47 +368,49 @@ class MaskTransformer(nn.Module):
         '''
         Prepare mask
         '''
-        interaction_mask = torch.bernoulli(torch.tensor(self.opt.interaction_mask_prob)).bool().item()
+        interaction_mask = torch.bernoulli(torch.tensor(self.opt.interaction_mask_prob)).bool().item() #指定interaction_mask_prob概率生成一个bool值
         # print(f"Interaction: {interaction_mask}")
-        if interaction_mask:
+        if interaction_mask: #lianggeren 
             mask_person_one = torch.bernoulli(torch.tensor(0.5)).bool().item()
             # print(f"zero first: {zeros_first}")
-            if mask_person_one:
+            if mask_person_one: #是否将第一个人放在half_batch_mask的前半部分
                 half_batch_mask = torch.cat((torch.zeros((bs//2,ntokens//2)), torch.ones((bs//2,ntokens//2))), dim=-1).bool()
             else:
                 half_batch_mask = torch.cat((torch.ones((bs//2,ntokens//2)), torch.zeros((bs//2,ntokens//2))), dim=-1).bool()
-            mask = torch.cat((half_batch_mask, ~half_batch_mask), dim=0).to(device)
+            #要么前半部分是0,后半部分是1,要么反过来
+            mask = torch.cat((half_batch_mask, ~half_batch_mask), dim=0).to(device) #(8, 750)
             rand_mask_probs = torch.ones((bs,), device=device) * 0.5
             rand_time = self.noise_schedule_backward(rand_mask_probs)
 
-        else:
-            rand_time = uniform((bs,), device=device)
-            rand_mask_probs = self.noise_schedule(rand_time)
-            num_token_masked = (ntokens * rand_mask_probs).round().clamp(min=1)
+        else:#随机掩码序列的一部分
+            rand_time = uniform((bs,), device=device)#生成一个均匀分布的随机值
+            rand_mask_probs = self.noise_schedule(rand_time)#计算每个位置的掩码概率
+            num_token_masked = (ntokens * rand_mask_probs).round().clamp(min=1)#序列掩码数量
 
-            batch_randperm = torch.rand((bs, ntokens), device=device).argsort(dim=-1)
+            batch_randperm = torch.rand((bs, ntokens), device=device).argsort(dim=-1) #位置的排序索引，排序目的是为了掩码选择哪些位置
             # Positions to be MASKED are ALL TRUE
-            mask = batch_randperm < num_token_masked.unsqueeze(-1)
+            mask = batch_randperm < num_token_masked.unsqueeze(-1)#随机掩码一部分
 
         # Positions to be MASKED must also be NON-PADDED
-        mask &= non_pad_mask
+        #mask:(8, 750)  non_pad_mask:(8, 750)
+        mask &= non_pad_mask  #哪些掩码 + 哪些是有效的
 
         # Note this is our training target, not input
-        labels = torch.where(mask, ids, self.mask_id)
-
+        labels = torch.where(mask, ids, self.mask_id) #mask的值变成为mask_id  #(8, 750)
         x_ids = ids.clone()
 
         # Further Apply Bert Masking Scheme
         # Step 1: 10% replace with an incorrect token
-        mask_rid = get_mask_subset_prob(mask, 0.1)
-        rand_id = torch.randint_like(x_ids, high=self.opt.num_tokens)
-        x_ids = torch.where(mask_rid, rand_id, x_ids)
+        mask_rid = get_mask_subset_prob(mask, 0.1)#百分之10替换为不正确的token
+        rand_id = torch.randint_like(x_ids, high=self.opt.num_tokens)#
+        x_ids = torch.where(mask_rid, rand_id, x_ids)#百分之10的概率替换为随机值
         # Step 2: 90% x 10% replace with correct token, and 90% x 88% replace with mask token
-        mask_mid = get_mask_subset_prob(mask & ~mask_rid, 0.88)
+
+        mask_mid = get_mask_subset_prob(mask & ~mask_rid, 0.88)#被选中mask的部分有百分之88被替换为mask
 
         x_ids = torch.where(mask_mid, self.mask_id, x_ids)
 
-        logits = self.trans_forward(x_ids, cond_vector, ~non_pad_mask, force_mask)
+        logits = self.trans_forward(x_ids, cond_vector, ~non_pad_mask, force_mask)#(8, 1024, 750)
         ce_loss, pred_id, acc = cal_performance(logits, labels, ignore_index=self.mask_id)
 
         logits = logits.permute(0,2,1) # B,ntokens,T -> B,T,ntokens
@@ -374,26 +426,26 @@ class MaskTransformer(nn.Module):
     def step_unroll_forward(self, prev_masked_ids, prev_mask, prev_labels, logits, cond_vector, non_pad_mask, force_mask):
         # print(f">>>>>>>>>>>> Step unroll >>>>>>>>>>>>>>>")
         total_timesteps = 20
-        prev_rand_mask_probs = prev_mask.count_nonzero(dim = -1).float() / prev_mask.shape[-1]
-        prev_rand_time = self.noise_schedule_backward(prev_rand_mask_probs)
+        prev_rand_mask_probs = prev_mask.count_nonzero(dim = -1).float() / prev_mask.shape[-1] #计算上一个时间步中被掩码的比例
+        prev_rand_time = self.noise_schedule_backward(prev_rand_mask_probs) #计算反向噪声调度的时间 #(b,)
 
-        rand_time = (prev_rand_time + (1/(total_timesteps+1))).clamp(max=1)
-        rand_mask_probs = self.noise_schedule(rand_time)
+        rand_time = (prev_rand_time + (1/(total_timesteps+1))).clamp(max=1) #(b,)
+        rand_mask_probs = self.noise_schedule(rand_time) #计算当前时间步的随机掩码概率 #(b,)
 
-        probs = logits.softmax(dim=-1)
+        probs = logits.softmax(dim=-1) #(b, 750, 1024)
         scores, pred_ids = probs.max(dim=-1)
-        scores = scores.masked_fill(~prev_mask, 1e5)
+        scores = scores.masked_fill(~prev_mask, 1e5)#被掩码的地方设置一个很大的数
 
         sorted_indices = scores.argsort(dim=1)  # (b, k), sorted_indices[i, j] = the index of j-th lowest element in scores on dim=1
         ranks = sorted_indices.argsort(dim=1)  # (b, k), rank[i, j] = the rank (0: lowest) of scores[i, j] on dim=1
-        num_token_masked = torch.round(rand_mask_probs * (scores.shape[-1])).clamp(min=1)
+        num_token_masked = torch.round(rand_mask_probs * (scores.shape[-1])).clamp(min=1)#需要掩码的token数量
 
-        mask = (ranks < num_token_masked.unsqueeze(-1))
+        mask = (ranks < num_token_masked.unsqueeze(-1))#哪些位置需要掩码
 
-        retained_preds = torch.logical_and(prev_mask == True,  mask == False)
-        labels = torch.where(retained_preds, self.mask_id, prev_labels)
+        retained_preds = torch.logical_and(prev_mask == True,  mask == False)#哪些位置在prev_mask是有效的，被保留的
+        labels = torch.where(retained_preds, self.mask_id, prev_labels)#保留的位置替换为mask_id
 
-        x_ids = torch.where(retained_preds, pred_ids, prev_masked_ids)
+        x_ids = torch.where(retained_preds, pred_ids, prev_masked_ids)#根据保留的位置，更新当前时间步的输入
 
         step_unroll_logits = self.trans_forward(x_ids, cond_vector, ~non_pad_mask, force_mask)
         return cal_performance(step_unroll_logits, labels, ignore_index=self.mask_id)
@@ -417,7 +469,7 @@ class MaskTransformer(nn.Module):
 
         aux_logits = self.trans_forward(motion_ids, cond_vector, padding_mask, force_mask=True)
 
-        scaled_logits = aux_logits + (logits - aux_logits) * cond_scale
+        scaled_logits = aux_logits + (logits - aux_logits) * cond_scale  #Classifier-free
         return scaled_logits
 
     @torch.no_grad()
@@ -612,4 +664,331 @@ class MaskTransformer(nn.Module):
 
         return ids
 
-                        
+class Mask_VLA_Agent(BaseModel):
+    def __init__(self, 
+                 code_dim, #512
+                 cond_mode, 
+                 latent_dim=256, 
+                 img_latent_dim=512,
+                 ff_size=1024, 
+                 num_encoder_layers=2,
+                 num_decoder_layers=8,
+                 num_heads=4, 
+                 dropout=0.1, 
+                 clip_dim=512, 
+                 cond_drop_prob=0.1, 
+                 lang_clip_version=None, 
+                 num_tokens = 1024, #vq里面的值的大小 256
+                 device = 'cuda',
+                 opt=None, 
+                #  mask_type='1D',
+                #  window_size=5,
+                 **kargs):
+        super().__init__()
+        self.code_dim = code_dim
+        self.latent_dim = latent_dim
+        self.img_latent_dim = img_latent_dim
+        self.clip_dim = clip_dim
+        self.dropout = dropout
+        self.opt = opt
+        self.mask_type = opt.mask_type
+        self.window_size = opt.window_size
+        self.nbp = self.window_size//5
+        self.cond_mode = cond_mode
+        self.cond_drop_prob = cond_drop_prob
+        self.device = device
+
+        self.language_clip = LangClip(model_name=lang_clip_version)
+
+        self.img_resnet = BesoResNetEncoder(self.img_latent_dim)
+
+        self.input_process = InputProcess(self.code_dim, self.latent_dim)
+
+        self.position_enc = SpaTempPositionalEncoding(self.latent_dim, self.dropout)
+
+        self.Transformer = VLATransformer(d_model=self.latent_dim,
+                                        nhead=num_heads,
+                                        dim_feedforward=ff_size,
+                                        dropout=dropout,
+                                        num_layers=num_decoder_layers,
+                                        nbp=self.nbp)
+        
+        self.cond_emb = nn.Linear(self.clip_dim, self.latent_dim)
+
+        cond_TransLayer = nn.TransformerEncoderLayer(d_model=self.latent_dim,
+                                                    nhead=8,
+                                                    dim_feedforward=4*self.latent_dim,
+                                                    dropout=0.1,
+                                                    activation="gelu",
+                                                    batch_first=True)
+        self.cond_Trans = nn.TransformerEncoder(cond_TransLayer, num_layers=num_encoder_layers)
+
+        self.cond_ln = nn.LayerNorm(self.latent_dim, bias = True)
+        _num_tokens = num_tokens + 1
+        self.mask_id = num_tokens
+        # self.pad_id = num_tokens + 1
+        # self.sep_id = num_tokens + 2
+
+        self.token_emb = nn.Embedding(_num_tokens, self.code_dim)#256+1,512
+        #看一下vqvae输出的这个是不是1024啊
+        self.output_process = OutputProcess_adaLN(out_feats=_num_tokens, latent_dim=latent_dim)
+
+        # self.clip_version = lang_clip_version
+        # self.load_and_freeze_clip(lang_clip_version)
+        
+        self.noise_schedule = cosine_schedule
+        self.noise_schedule_backward = cosine_schedule_backward
+
+    # def load_and_freeze_clip(self, clip_version): #ViT-B/32
+
+    #     ##From InterGen
+    #     clip_model, preprocess = clip.load(clip_version, device="cpu", jit=False)
+    #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #     clip_model = clip_model.to(device) 
+    #     clip_model.eval() 
+    #     self.clip_model = clip_model
+    #     self.clip_encode_image = clip_model.encode_image
+    #     self.clip_token_embedding = clip_model.token_embedding
+    #     self.clip_transformer = clip_model.transformer
+    #     self.clip_positional_embedding = clip_model.positional_embedding
+    #     self.clip_ln_final = clip_model.ln_final
+    #     self.clip_dtype = clip_model.dtype
+    #     self.preprocess = preprocess
+
+    #     for p in self.clip_transformer.parameters():
+    #         p.requires_grad = False
+    #     for p in self.clip_token_embedding.parameters():
+    #         p.requires_grad = False
+    #     for p in self.clip_ln_final.parameters():
+    #         p.requires_grad = False
+        
+    #     clipTransLayer = nn.TransformerEncoderLayer(d_model=768,
+    #                                                 nhead=8,
+    #                                                 dim_feedforward=2048,
+    #                                                 dropout=0.1,
+    #                                                 activation="gelu",
+    #                                                 batch_first=True)
+    #     self.clipTrans = nn.TransformerEncoder(clipTransLayer, num_layers=2)
+    #     self.clipln = nn.LayerNorm(768)
+
+    def encode_text_origin(self, raw_text):
+        device = next(self.parameters()).device
+        # for raw_text in raw_text_list:
+        with torch.no_grad():
+            text = clip.tokenize(raw_text, truncate=True).to(device)#(B, 77)
+            x = self.clip_token_embedding(text).type(self.clip_dtype)#(B, 77, 768)
+            pe_tokens = x + self.clip_positional_embedding.type(self.clip_dtype)#(B, 77, 768)
+            x = pe_tokens.permute(1,0,2) #torch.Size([77, B, 768])
+            x = self.clip_transformer(x)
+            x = x.permute(1,0,2)
+            clip_out = self.clip_ln_final(x).type(self.clip_dtype)#torch.Size([B, 77, 768])
+        out = self.clipTrans(clip_out)
+        out = self.clipln(out)#torch.Size([B, 77, 768])
+        feat_clip_text = out[torch.arange(x.shape[0]), text.argmax(dim=-1)]#(B, 768)
+        return feat_clip_text
+    
+    def encode_text(self, raw_text):
+        device = next(self.parameters()).device
+        language_clip_model = self.language_clip
+        text_vector = language_clip_model(raw_text).to(device)
+        return text_vector#(B, 1, 512)
+    
+    def encode_img_origin(self, pil_image_list):
+        device = next(self.parameters()).device
+        image_input = torch.stack([self.preprocess(img) for img in pil_image_list]).to(device)
+        #torch.Size([8, 3, 336, 336])
+        #这里报错，提示模型在cpu上，但是权重在GPU上，应该保持一致看一下，intermask是怎么做的
+        with torch.no_grad():
+            img_out = self.clip_encode_image(image_input).type(self.clip_dtype)
+        return img_out
+    
+    def encode_img(self, img): #img:(B, 1, 3, 224, 224)
+        #先做转换
+        img = img.to(self.device)
+        if img.ndim == 5:
+            img = einops.rearrange(img, 'b t c h w -> (b t) c h w')
+        img_tokens = self.img_resnet(img).unsqueeze(1)
+        return img_tokens
+    
+    def mask_cond(self, cond, force_mask=False):#条件掩码
+        bs, d =  cond.shape
+        if force_mask:
+            return torch.zeros_like(cond)
+        elif self.training and self.cond_drop_prob > 0.:#1
+            mask = torch.bernoulli(torch.ones(bs, device=cond.device) * self.cond_drop_prob).view(bs, 1)
+            return cond * (1. - mask)
+        else:
+            return cond
+        
+    def trans_forward(self, discretized_action_ids, cond, force_mask=False):
+        # # bs, n_tokens = discretized_action_ids.shape
+        # cond = self.mask_cond(cond, force_mask=force_mask)
+        # x = self.token_emb(cond) #(b,len,dim)
+        # x = self.input_process(x)
+        # cond = self.cond_emb(cond) #(b, latent_dim)
+        # x = self.position_enc(x)
+        # output = self.Transformer(x, cond, src_key_padding_mask=padding_mask)
+        # logits = self.output_process(output, cond) 
+        # return logits
+        cond = self.mask_cond(cond, force_mask=force_mask)
+        x = self.token_emb(discretized_action_ids) #(b,ntokens) -> (b,ntokens,dim)
+        x = self.input_process(x) #(ntokens,b,dim)
+        x = self.position_enc(x, window_size = self.window_size)
+        output = self.Transformer(x, cond, src_key_padding_mask=None)#这里的src_key_padding_mask要注意是否要给出定义
+        logits = self.output_process(output, cond) #(B, _num_tokens, x*y)
+        return logits
+
+    def cond_encoder(self, cond, custom_attn_mask=None):#(B, 2, 512)
+        #deal condition shapes
+
+        x = self.cond_Trans(cond, src_key_padding_mask=custom_attn_mask)
+        x = self.cond_ln(x)
+        return x
+
+    def forward(self, batch):
+        '''
+        :param ids: (b, n)  #(b, vqvae_output_dimension)
+        :batch:
+        {
+            batch['discretized_action']: (B, w/5, 4),
+            batch['dataset_name']:[[b'libero_10_no_noops', b'libero_10_no_noops', b'libero_10_no_noops', b'libero_10_no_noops', b'libero_10_no_noops', b'libero_10_no_noops', b'libero_10_no_noops', b'libero_10_no_noops']]
+            batch['action']:(B, 5, 7),
+            batch['lang']: [txt1,txt2,..]
+            batch['img']:torch.Size([B, 224, 224, 3])
+            batch['img_tensor']:torch.Size([8, 1, 3, 224, 224])
+        }
+        '''
+        batch = self.prepare_batch(batch) #to GPU
+        discretized_action = batch['discretized_action']
+        lang = batch['lang']
+        img = batch['img']
+        img_tensor = batch['img_tensor']
+        # pil_image_list = []
+        # for i in range(bs):
+        #     single_image_array = image[i] #(224,224,3)
+        #     single_image_array = single_image_array.permute(2, 0, 1)
+        #     to_pil = ToPILImage()
+        #     pil_image = to_pil(single_image_array)
+        #     pil_image_list.append(pil_image)
+        #研究img和text的数量大小，和在哪个设备上过模型，有没有需要加速的地方
+        force_mask = False
+        img_vector = self.encode_img(img_tensor)#(B, 1, 512)
+        text_vector = self.encode_text(lang) #(B, 1, 512)
+        cond = torch.cat([img_vector, text_vector], dim = 1)#(B, 2, 512)
+        #这里cond要过几层encoder
+        cond = self.cond_emb(cond)
+        cond = self.cond_encoder(cond)#(B, 2, 512)
+        cond = cond.mean(dim = 1)#(B, 512)
+        #(clip_dim→latent_dim)
+        #这里要提防绝对值大小不一样的问题，看一下MDT怎么解决的，先放着
+        #这里的融合有讲究，要么cross-attention,要么直接在第二个维度拼接,这个后面还可以改
+        
+        discretized_action_ids = discretized_action.view(discretized_action.shape[0], -1) #(B, w/5 * 4)
+        #暂时B, 4，之后B, 2, 4
+        bs, xtokens, ytokens = discretized_action.shape
+        ntokens = xtokens * ytokens
+        #1D掩码
+        if self.mask_type == '1D':
+            rand_time = uniform((bs,), device=self.device)#(bs,)
+            rand_mask_probs = self.noise_schedule(rand_time)#每个样本的掩码比例
+            num_token_masked = (ntokens * rand_mask_probs).round().clamp(min=1)#每个样本的掩码数量
+            batch_randperm = torch.rand((bs, ntokens), device=self.device).argsort(dim=-1)
+            mask = batch_randperm < num_token_masked.unsqueeze(-1)#(bs, ntokens),遮蔽的位置
+            labels = torch.where(mask, discretized_action_ids, self.mask_id)#(bs, ntokens)
+            #mask or keep origin
+            x_ids = discretized_action_ids.clone()
+            mask_rid = get_mask_subset_prob(mask, 0.1)
+            rand_id = torch.randint_like(x_ids, high=self.mask_id)
+            x_ids = torch.where(mask_rid, rand_id, x_ids)#10%替换为随机的值
+            mask_mid = get_mask_subset_prob(mask & ~mask_rid, 0.88)
+            x_ids = torch.where(mask_mid, self.mask_id, x_ids)#(b, x*y)
+
+        elif self.mask_type == '2D':
+            rand_time = uniform((bs,), device=self.device)
+            rand_mask_probs = self.noise_schedule(rand_time)
+
+            # ========== temporal mask
+            #因为太少了，min就设置为0吧
+            num_token_masked = (xtokens * rand_mask_probs).round().clamp(min=0)
+            batch_randperm = torch.rand((bs, xtokens), device=self.device).argsort(dim=-1)
+            # Positions to be MASKED are ALL TRUE
+            mask = batch_randperm < num_token_masked.unsqueeze(-1)
+            # Positions to be MASKED must also be NON-PADDED
+            # mask = mask & non_pad_mask[..., 0]
+            # Note this is our training target, not input
+            labels = torch.where(mask[..., None].repeat(1, 1, ytokens), discretized_action, self.mask_id)
+            x_ids = discretized_action.clone()
+            # Further Apply Bert Masking Scheme
+            # Step 1: 10% replace with an incorrect token
+            mask_rid = get_mask_subset_prob(mask, 0.1)
+            rand_id = torch.randint_like(x_ids, high=self.mask_id)
+            x_ids = torch.where(mask_rid[..., None].repeat(1, 1, ytokens), rand_id, x_ids)
+            # Step 2: 90% x 10% replace with correct token, and 90% x 88% replace with mask token
+            mask_mid = get_mask_subset_prob(mask & ~mask_rid, 0.88)
+            x_ids = torch.where(mask_mid[..., None].repeat(1, 1, ytokens), self.mask_id, x_ids)
+            mask_time = mask
+            mask_time = mask_time[..., None].repeat(1, 1, ytokens)       # keep temperal mask still masked
+            # print((x_ids==512).sum(), mask_time.sum(), mask.sum(), (labels!=512).sum(), mask_rid.sum())
+
+            # ========== spatial mask
+            num_token_masked = (ntokens * rand_mask_probs).round().clamp(min=0)
+            batch_randperm = torch.rand((bs, ntokens), device=self.device).argsort(dim=-1)
+            # Positions to be MASKED are ALL TRUE
+            mask = batch_randperm < num_token_masked.unsqueeze(-1)
+            # Positions to be MASKED must also be NON-PADDED
+            # mask = mask & non_pad_mask.reshape(bs, -1)
+            mask = mask & ~mask_time.reshape(bs, -1)
+            # Note this is our training target, not input
+            labels = torch.where(mask, x_ids.reshape(bs, -1), labels.reshape(bs, -1))
+            x_ids = x_ids.reshape(bs, -1)
+            # Further Apply Bert Masking Scheme
+            # Step 1: 10% replace with an incorrect token
+            mask_rid = get_mask_subset_prob(mask, 0.1)
+
+            rand_id = torch.randint_like(x_ids, high=self.mask_id)
+            x_ids = torch.where(mask_rid, rand_id, x_ids)
+            # Step 2: 90% x 10% replace with correct token, and 90% x 88% replace with mask token
+            mask_mid = get_mask_subset_prob(mask & ~mask_rid, 0.88)
+            # mask_mid = mask
+            x_ids = torch.where(mask_mid, self.mask_id, x_ids)#(b, x*y)
+        
+        #trans_forward
+        logits = self.trans_forward(x_ids, cond, force_mask)
+        ce_loss, pred_id, acc = cal_performance(logits, labels, ignore_index=self.mask_id)
+        logits = logits.permute(0,2,1)
+
+        if self.opt.step_unroll:
+            su_ce_loss, su_pred_id, su_acc = self.step_unroll_forward(x_ids, mask_mid, labels, logits, cond, force_mask)
+            loss = ce_loss + (self.opt.step_unroll * su_ce_loss)
+            acc = (acc + self.opt.step_unroll*su_acc)/2,
+            return loss, acc, pred_id, su_pred_id, logits
+        else:
+            return ce_loss, acc, pred_id, None, logits
+    
+    def step_unroll_forward(self, prev_masked_ids, prev_mask, prev_labels, logits, cond_vector, force_mask):
+        # print(f">>>>>>>>>>>> Step unroll >>>>>>>>>>>>>>>")
+        #纠错式再预测
+        total_timesteps = 20
+        prev_rand_mask_probs = prev_mask.count_nonzero(dim = -1).float() / prev_mask.shape[-1]
+        prev_rand_time = self.noise_schedule_backward(prev_rand_mask_probs)
+        #反推上一步的时间刻度
+        rand_time = (prev_rand_time + (1/(total_timesteps+1))).clamp(max=1)
+        rand_mask_probs = self.noise_schedule(rand_time)
+
+        probs = logits.softmax(dim=-1) #用上一步的logits
+        scores, pred_ids = probs.max(dim=-1) 
+        scores = scores.masked_fill(~prev_mask, 1e5)#上一轮对不该动的位置设置为1e5,避免再次挑中
+
+        sorted_indices = scores.argsort(dim=1)  # (b, k), sorted_indices[i, j] = the index of j-th lowest element in scores on dim=1
+        ranks = sorted_indices.argsort(dim=1)  # (b, k), rank[i, j] = the rank (0: lowest) of scores[i, j] on dim=1
+        num_token_masked = torch.round(rand_mask_probs * (scores.shape[-1])).clamp(min=1)
+
+        mask = (ranks < num_token_masked.unsqueeze(-1))#挑出前num_token_masked个位置mask重新预测
+
+        retained_preds = torch.logical_and(prev_mask == True,  mask == False)
+        labels = torch.where(retained_preds, self.mask_id, prev_labels)
+
+        x_ids = torch.where(retained_preds, pred_ids, prev_masked_ids)
+
+        step_unroll_logits = self.trans_forward(x_ids, cond_vector, force_mask)
+        return cal_performance(step_unroll_logits, labels, ignore_index=self.mask_id)

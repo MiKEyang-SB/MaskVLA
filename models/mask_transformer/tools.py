@@ -138,11 +138,11 @@ def cal_performance(pred, labels, ignore_index=None, smoothing=0., tk=1):
     # mask = labels.ne(ignore_index)
     # n_correct = pred_id.eq(labels).masked_select(mask)
     # acc = torch.mean(n_correct.float()).item()
-    pred_id_k = torch.topk(pred, k=tk, dim=1).indices
-    pred_id = pred_id_k[:, 0]
-    mask = labels.ne(ignore_index)
+    pred_id_k = torch.topk(pred, k=tk, dim=1).indices #(b, 1, 750)
+    pred_id = pred_id_k[:, 0] #(b, 750)  top1预测值的索引
+    mask = labels.ne(ignore_index) #1024是mask
     n_correct = (pred_id_k == labels.unsqueeze(1)).any(dim=1).masked_select(mask)
-    acc = torch.mean(n_correct.float()).item()
+    acc = torch.mean(n_correct.float()).item() #准确率
 
     return loss, pred_id, acc
 

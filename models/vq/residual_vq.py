@@ -182,9 +182,9 @@ class ResidualVQ(nn.Module):
 
             quantized, *rest = layer(residual, return_idx=True) #single quantizer
 
-            residual = residual - quantized.detach()
-            quantized_out = quantized_out + quantized
-
+            residual = residual - quantized.detach()#更新残差
+            quantized_out = quantized_out + quantized #torch.Size([8, 512, 375])
+            #累加量化输出
             embed_indices, loss, perplexity = rest
             all_indices.append(embed_indices)
             # print(quantizer_index, embed_indices[0])
@@ -195,5 +195,5 @@ class ResidualVQ(nn.Module):
         code_idx = torch.stack(all_indices, dim=-1)
         all_codes = torch.stack(all_codes, dim=0)
         if return_latent:
-            return code_idx, all_codes
+            return code_idx, all_codes #所有层的索引、所有层的量化代码
         return code_idx

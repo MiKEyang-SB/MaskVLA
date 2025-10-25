@@ -53,15 +53,15 @@ class Encoder(nn.Module):
 
     def gcn_forward(self, x, edge_indices=edge_indices):
         B, D, J, T = x.shape
-        x = x.permute(0,3,2,1)
+        x = x.permute(0,3,2,1) #（b, 300, 22, 12)
         x = x.reshape(-1, x.shape[2], x.shape[3])
-        x = x.reshape(-1, x.shape[2])
+        x = x.reshape(-1, x.shape[2]) #(B*300*22, 12)
         edge_indices = edge_indices.to(x.device)
         x = self.gcn_act1(self.gcn_layer1(x, edge_indices))
-        x = self.gcn_act2(self.gcn_layer2(x, edge_indices))
+        x = self.gcn_act2(self.gcn_layer2(x, edge_indices)) ##(B*300*22, 512)
         x = x.reshape(-1, J, x.shape[1])
         x = x.reshape(B, -1, x.shape[1], x.shape[2])
-        x = x.permute(0,3,2,1)
+        x = x.permute(0,3,2,1) #torch.Size([8, 512, 22, 300])
         return x
     
     def forward(self, x):

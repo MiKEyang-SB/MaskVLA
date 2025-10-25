@@ -39,7 +39,7 @@ class SpaTempAttnLayer(nn.Module):
     def forward(self, src, 
                 shift_spa, scale_spa, gate_spa, 
                 shift_temp, scale_temp, gate_temp, 
-                src_key_padding_mask=None, src2=None):
+                src_key_padding_mask=None, src2=None):#src2是cross-attention
         
         # Reshape input for spatial and temporal attention
         spa_src, temp_src, spa_src2, temp_src2, pad, \
@@ -50,11 +50,11 @@ class SpaTempAttnLayer(nn.Module):
                                                                                     )
         
         # Spatial multihead self-attention block
-        spa_src_mod = modulate(self.spa_norm(spa_src), shift_spa, scale_spa)
+        spa_src_mod = modulate(self.spa_norm(spa_src), shift_spa, scale_spa) #(5, B*75, 384)
         if src2 is None:
             spa_src = spa_src + gate_spa.unsqueeze(0) * self.spa_dropout(self.spatial_attention(spa_src_mod, spa_src_mod, spa_src_mod,
                                                                                                 key_padding_mask=None,
-                                                                                                need_weights=False)[0])
+                                                                                                need_weights=False)[0]) #(5, B*75, 384)
         else:
             spa_src = spa_src + gate_spa.unsqueeze(0) * self.spa_dropout(self.spatial_attention(spa_src_mod, spa_src2, spa_src2,
                                                                                                 key_padding_mask=None,
@@ -62,31 +62,31 @@ class SpaTempAttnLayer(nn.Module):
         
 
         # Temporal multihead self-attention block
-        temp_src_mod = modulate(self.temp_norm(temp_src), shift_temp, scale_temp)
+        temp_src_mod = modulate(self.temp_norm(temp_src), shift_temp, scale_temp)#(75, 5*b, 384)
         if src2 is None:
             temp_src = temp_src + gate_temp.unsqueeze(0) * self.temp_dropout(self.temporal_attention(temp_src_mod, temp_src_mod, temp_src_mod,
                                                                                                     key_padding_mask=pad,
-                                                                                                    need_weights=False)[0])
+                                                                                                    need_weights=False)[0])#(75, 5*b, 384)
         else:
             temp_src = temp_src + gate_temp.unsqueeze(0) * self.temp_dropout(self.temporal_attention(temp_src_mod, temp_src2, temp_src2,
                                                                                                     key_padding_mask=pad,
                                                                                                     need_weights=False)[0])
 
         spa_src, temp_src = self.reshape_spa_temp_attn_outputs(spa_src, temp_src) 
-        spa_temp_src = spa_src + temp_src
+        spa_temp_src = spa_src + temp_src #时空注意力相加
 
         return spa_temp_src
     
     def create_spa_temp_attn_inputs(self, src, src2, padding_mask, 
                                     shift_spa, scale_spa, gate_spa,
                                     shift_temp, scale_temp, gate_temp):
-        n_tokens, B, d = src.shape
+        n_tokens, B, d = src.shape #维度怎么变了
         self.B, self.d = B, d
 
-        src_wo_text_3d = src.reshape(self.spa_dim, -1, B, d)
-        spa_src = src_wo_text_3d.reshape(self.spa_dim, -1, d)
-        temp_src = src_wo_text_3d.permute(1,0,2,3)
-        temp_src = temp_src.reshape(-1, self.spa_dim*B, d)
+        src_wo_text_3d = src.reshape(self.spa_dim, -1, B, d) #spa_dim = 5,这个可能是时间维度的 (5, 75, b, 384)
+        spa_src = src_wo_text_3d.reshape(self.spa_dim, -1, d) #(5, 75*b, 384)
+        temp_src = src_wo_text_3d.permute(1,0,2,3) #(75, 5, b, 384)
+        temp_src = temp_src.reshape(-1, self.spa_dim*B, d) #(75, 5*b, 384)
         
         if src2 is not None:
             src2_wo_text_3d = src2.reshape(self.spa_dim, -1, B, d)
@@ -97,9 +97,9 @@ class SpaTempAttnLayer(nn.Module):
             spa_src2 = None
             temp_src2 = None
             
-        shift_spa = shift_spa.repeat(spa_src.shape[1]//B, 1)
-        scale_spa = scale_spa.repeat(spa_src.shape[1]//B, 1)
-        gate_spa = gate_spa.repeat(spa_src.shape[1]//B, 1)
+        shift_spa = shift_spa.repeat(spa_src.shape[1]//B, 1) #(75*b, 384)
+        scale_spa = scale_spa.repeat(spa_src.shape[1]//B, 1)#(75*b, 384)
+        gate_spa = gate_spa.repeat(spa_src.shape[1]//B, 1)#(75*b, 384)
 
 
         # temp_src = src_wo_text_3d.permute(1,0,2,3)
@@ -107,15 +107,16 @@ class SpaTempAttnLayer(nn.Module):
         
         # temp_src = src_wo_text_3d.permute(1,0,2,3)
         # temp_src = temp_src.reshape(-1, self.spa_dim*B, d)
-        shift_temp = shift_temp.repeat(self.spa_dim, 1)
-        scale_temp = scale_temp.repeat(self.spa_dim, 1)
-        gate_temp = gate_temp.repeat(self.spa_dim, 1)
+        shift_temp = shift_temp.repeat(self.spa_dim, 1)#(5*b, 384)
+        scale_temp = scale_temp.repeat(self.spa_dim, 1)#(5*b, 384)
+        gate_temp = gate_temp.repeat(self.spa_dim, 1)#(5*b, 384)
 
-        pad = padding_mask.permute(1,0)
-        pad = pad.reshape(self.spa_dim, -1, B)
-        pad = pad.permute(1,0,2)
-        pad = pad.reshape(-1, self.spa_dim*B)
-        pad = pad.permute(1,0)
+        # pad = padding_mask.permute(1,0) #(375, 8)
+        # pad = pad.reshape(self.spa_dim, -1, B)
+        # pad = pad.permute(1,0,2) #(75, 5, 8)
+        # pad = pad.reshape(-1, self.spa_dim*B)
+        # pad = pad.permute(1,0) #(5*b,75)
+        pad = None #变长掩码，实际我们处理的是定长的内容
 
         return spa_src, temp_src, spa_src2, temp_src2, pad, shift_spa, scale_spa, gate_spa, shift_temp, scale_temp, gate_temp
     
@@ -209,14 +210,14 @@ class InterMTransformerBlock(nn.Module):
         self.spa_dim = nbp
         
         self.adaLN_mod_combined = AdaLNModulation(d_model, 6)
-        self.self_attn = SelfAttnLayer(d_model, nhead, dropout)
-        self.ffn_combined = FFN(d_model, dim_feedforward, dropout)
+        self.self_attn = SelfAttnLayer(d_model, nhead, dropout) #self-attention
+        self.ffn_combined = FFN(d_model, dim_feedforward, dropout) #feed-forward
 
         self.adaLN_mod_split = AdaLNModulation(d_model, 14)
-        self.spa_temp_attn = SpaTempAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim)
+        self.spa_temp_attn = SpaTempAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim) #spatio-temporal-attn
         # self.spa_temp_attn_cross = SpaTempAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim)
-        self.local_inter_attn = LocalInteractionAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim)
-        self.ffn_split = FFN(d_model, dim_feedforward, dropout)
+        self.local_inter_attn = LocalInteractionAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim) #cross-attn
+        self.ffn_split = FFN(d_model, dim_feedforward, dropout) #feed-forward
 
         
         
@@ -227,7 +228,7 @@ class InterMTransformerBlock(nn.Module):
         
         # AdaLN modulation
         shift_self, scale_self, gate_self, \
-            shift_ffn_c, scale_ffn_c, gate_ffn_c = self.adaLN_mod_combined(cond)
+            shift_ffn_c, scale_ffn_c, gate_ffn_c = self.adaLN_mod_combined(cond) #adal-n all (8, 384)
 
         # Self-Attention
         src = self.self_attn(src, 
@@ -238,14 +239,14 @@ class InterMTransformerBlock(nn.Module):
         src = self.ffn_combined(src, shift_ffn_c, scale_ffn_c, gate_ffn_c)
 
         ################### Split ###################
-        src1, sep, src2  = src.split([N//2, 1, N//2])
-        pad,_,_ = src_key_padding_mask.split([N//2, 1, N//2], dim=-1)
+        src1, sep, src2  = src.split([N//2, 1, N//2]) #第一个人、分隔符、第二个人 (375, b, 384)
+        pad,_,_ = src_key_padding_mask.split([N//2, 1, N//2], dim=-1) #pad分割
 
         # AdaLN modulation
         # shift_cross_spa, scale_cross_spa, gate_cross_spa, shift_cross_temp, scale_cross_temp, gate_cross_temp, \
         shift_spa, scale_spa, gate_spa, shift_temp, scale_temp, gate_temp, \
             shift_cross, scale_cross, shift_cross2, scale_cross2, gate_cross, \
-                shift_ffn_s, scale_ffn_s, gate_ffn_s = self.adaLN_mod_split(cond) 
+                shift_ffn_s, scale_ffn_s, gate_ffn_s = self.adaLN_mod_split(cond) #(8, 384)
 
         # Spatial-Temporal Attention
         # src1 = self.spa_temp_attn(src1, 
@@ -321,4 +322,72 @@ class InterMTransformer(nn.Module):
         src = torch.cat([src[:src.shape[0]//2, : ,:],
                         src[(src.shape[0]//2)+1:, : ,:]])
                 
+        return src
+    
+class VLATransformerBlock(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward, dropout, nbp):
+        super().__init__()
+        self.spa_dim = nbp #时间步
+        self.adaLN_mod_combined = AdaLNModulation(d_model, 6)
+        self.self_attn = SelfAttnLayer(d_model, nhead, dropout) #self-attention
+        self.ffn_combined = FFN(d_model, dim_feedforward, dropout) #feed-forward
+        self.adaLN_mod_split = AdaLNModulation(d_model, 9)
+        self.spa_temp_attn = SpaTempAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim) #spatio-temporal-attn
+        # self.local_inter_attn = LocalInteractionAttnLayer(d_model, nhead, dropout, spa_dim=self.spa_dim) #cross-attn
+        self.ffn_spa = FFN(d_model, dim_feedforward, dropout) #feed-forward
+    
+    def forward(self, src, cond, src_key_padding_mask=None):
+        N, B, d = src.shape
+        # AdaLN modulation
+        shift_self, scale_self, gate_self, \
+            shift_ffn_c, scale_ffn_c, gate_ffn_c = self.adaLN_mod_combined(cond) #adal-n all (b, latent_dim)
+        
+        # Self-Attention
+        src = self.self_attn(src, 
+                            shift_self, scale_self, gate_self,
+                            src_key_padding_mask=src_key_padding_mask)
+        
+        # FFN
+        src = self.ffn_combined(src, shift_ffn_c, scale_ffn_c, gate_ffn_c)
+
+        # AdaLN modulation
+        shift_spa, scale_spa, gate_spa, shift_temp, scale_temp, gate_temp, \
+                shift_ffn_s, scale_ffn_s, gate_ffn_s = self.adaLN_mod_split(cond) #(b, latent_dim)
+        # shift_cross, scale_cross, shift_cross2, scale_cross2, gate_cross, \
+        src_spa_temp = self.spa_temp_attn(src, 
+                            shift_spa, scale_spa, gate_spa, 
+                            shift_temp, scale_temp, gate_temp, 
+                            src_key_padding_mask=src_key_padding_mask)
+        src_after = self.ffn_spa(src_spa_temp, shift_ffn_s, scale_ffn_s, gate_ffn_s)
+        return src_after
+
+
+class VLATransformer(nn.Module):
+    def __init__(self, num_layers, d_model, nhead, dim_feedforward, dropout, nbp):
+        super().__init__()
+        block = VLATransformerBlock(d_model=d_model,
+                                nhead=nhead,
+                                dim_feedforward=dim_feedforward,
+                                dropout=dropout,
+                                nbp=nbp)
+        #方案a,使用adaln把条件信息注入
+        #方案b,使用cross-attention注入条件信息
+        module_list = []
+        
+        for _ in range(num_layers):
+            module_list.append(copy.deepcopy(block))
+
+        self.blocks =  ModuleList(module_list)
+
+    def forward(self, src, cond, src_key_padding_mask=None):
+        """
+        Args:
+            src: Tensor, shape (751, B, d_model)
+            src_key_padding_mask: Tensor, shape (B, 751) 
+
+        Additional token is for the condition
+        """
+
+        for block in self.blocks:
+            src = block(src, cond, src_key_padding_mask=src_key_padding_mask)
         return src

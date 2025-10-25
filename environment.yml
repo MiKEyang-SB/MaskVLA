@@ -1,10 +1,10 @@
-name: intermask
+name: intermask2
 channels:
   - pytorch
   - nvidia
   - defaults
 dependencies:
-  - python=3.7.7
+  - python=3.8
   - pip
   - ffmpeg=4.2.2
   - pytorch=1.13.1=py3.7_cuda11.7_cudnn8.5.0_0
@@ -24,3 +24,4 @@ dependencies:
     - sparsemax==0.1.9
     - tensorboard==2.11.2
     - torch-geometric==2.3.1
+    - timm==0.9.10

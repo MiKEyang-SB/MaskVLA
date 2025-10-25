@@ -168,4 +168,8 @@ data/InterHuman
 data/Inter-X_Dataset
 data/ntu
 data/body_model/smplx
-
+datasets
+CLIP
+en_core_web_sm-3.3.0
+run
+datasets.zip

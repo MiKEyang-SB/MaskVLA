@@ -67,7 +67,7 @@ class ResConvBlock(nn.Module):
         x = self.conv2(x)
         x = self.dropout(x)
         x = x + x_orig
-        return x
+        return x #(8, 512, joint = 11, t = 150) 
 
 
 class Resnet(nn.Module):

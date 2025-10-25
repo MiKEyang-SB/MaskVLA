@@ -54,18 +54,18 @@ class MaskTransformerTrainer:
             _, _, conds, _, motions, m_lens, _ = batch_data
             motion1, motion2 = motions.split(6, dim=-1)
 
-        motion1 = motion1.detach().float().to(self.device)
-        motion2 = motion2.detach().float().to(self.device)
-        m_lens = m_lens.detach().long().to(self.device)
+        motion1 = motion1.detach().float().to(self.device)#(8, 300, 262) (b,t,d)
+        motion2 = motion2.detach().float().to(self.device)#(8, 300, 262)
+        m_lens = m_lens.detach().long().to(self.device)#(8,)
         # print(f"Motions from dataset: {motion1.shape}, {motion2.shape}")
         # print(f"Motion lenghts: {m_lens}")
         
-        code_idx1, _ = self.vq_model.encode(motion1)
-        code_idx2, _ = self.vq_model.encode(motion2)
-        code_idx = torch.cat([code_idx1, code_idx2], dim=1)
+        code_idx1, _ = self.vq_model.encode(motion1) #(8, 375, 1)
+        code_idx2, _ = self.vq_model.encode(motion2) #(8, 375, 1)
+        code_idx = torch.cat([code_idx1, code_idx2], dim=1) #(8, 750, 1)
         # print(f"Code Index: {code_idx1.shape}, {code_idx2.shape}, {code_idx.shape}")
         
-        conds = conds.to(self.device).float() if torch.is_tensor(conds) else conds
+        conds = conds.to(self.device).float() if torch.is_tensor(conds) else conds #[8,]list
 
         m_lens = m_lens // 4
         # print(f"Motion Lengths: {m_lens}")
@@ -113,8 +113,8 @@ class MaskTransformerTrainer:
         return checkpoint['ep'], checkpoint['total_it']
 
     def train(self, train_loader, val_loader, test_loader, eval_wrapper):
-        self.t2m_transformer.to(self.device)
-        self.vq_model.to(self.device)
+        self.t2m_transformer.to(self.device)#mask_transformer
+        self.vq_model.to(self.device)#vq_vae
 
         # for name, p in self.t2m_transformer.named_parameters():
         #     print(name)
@@ -167,7 +167,7 @@ class MaskTransformerTrainer:
                 if it < self.opt.warm_up_iter:
                     self.update_lr_warm_up(it, self.opt.warm_up_iter, self.opt.lr)
 
-                loss, acc = self.update(batch_data=batch)
+                loss, acc = self.update(batch_data=batch)#forward
 
 
                 logs['loss'] += loss
@@ -205,11 +205,6 @@ class MaskTransformerTrainer:
 
             self.logger.add_scalar('Val/loss', np.mean(val_loss), epoch)
             self.logger.add_scalar('Val/acc', np.mean(val_acc), epoch)
-
-            if np.mean(val_acc) > max_acc:
-                print(f"Improved accuracy from {max_acc:.02f} to {np.mean(val_acc)}!!!")
-                self.save(pjoin(self.opt.model_dir, 'best_acc.tar'), epoch, it)
-                max_acc = np.mean(val_acc)
             
             if np.mean(val_loss) < min_loss:
                 print(f"Improved Loss from {min_loss:.02f} to {np.mean(val_loss)}!!!")

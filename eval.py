@@ -137,14 +137,14 @@ def get_metric_statistics(values):
     return mean, conf_interval
 
 
-def evaluation(log_file):
+def evaluation(log_file): #
     with open(log_file, 'w') as f:
         all_metrics = OrderedDict({'MM Distance': OrderedDict({}),
                                    'R_precision': OrderedDict({}),
                                    'FID': OrderedDict({}),
                                    'Diversity': OrderedDict({}),
                                    'MultiModality': OrderedDict({})})
-        for replication in range(replication_times):
+        for replication in range(replication_times):#多次评估复制
             motion_loaders = {}
             mm_motion_loaders = {}
             motion_loaders['ground truth'] = gt_loader
@@ -349,7 +349,7 @@ if __name__ == '__main__':
         
         
         main_opt.num_tokens = vq_opt.nb_code
-        main_opt.code_dim = vq_opt.code_dim
+        main_opt.code_dim = vq_opt.code_dim #512
     else:
         opt.mm_num_samples = 0
         vq_opt_path = pjoin(opt.checkpoints_dir, opt.dataset_name, opt.name, 'opt.txt')
@@ -434,8 +434,8 @@ if __name__ == '__main__':
                                         )
     
     if opt.use_trans:
-        for cond_scale in opt.cond_scales:
-            for time_step in opt.time_steps:
+        for cond_scale in opt.cond_scales: #2
+            for time_step in opt.time_steps: #20
                 for topkr in opt.topkr:
                     eval_motion_loaders = {}
                     for file in os.listdir(opt.model_dir):
@@ -443,18 +443,18 @@ if __name__ == '__main__':
                             continue
                         
                         print(f"\n\nLoading model epoch: {file}")
-                        trans = load_trans_model(main_opt, file)
+                        trans = load_trans_model(main_opt, file)#transformer
                         net, ep = load_vq_model(vq_opt, "best_fid.tar")
                         
                         file = react_name + file
                         eval_motion_loaders[file] = make_callable(net, file, trans)
-                    
+                    #{'bect_fid.tar':}
                     which_epoch = opt.which_epoch
                     
                     log_file_name = f'evaluation_{which_epoch}_ts{time_step}_cs{cond_scale}_topkr{topkr}.log'
                     log_file_name = react_name + log_file_name
                     log_file = pjoin(opt.eval_dir, log_file_name)
-                    evaluation(log_file)
+                    evaluation(log_file) #./trans_default/eval/eval...
     else:
         eval_motion_loaders = {}
         for file in os.listdir(opt.model_dir):

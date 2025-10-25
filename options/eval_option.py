@@ -18,7 +18,7 @@ def arg_parse():
 
     ## eval settings
     parser.add_argument('--mm_num_samples', type=int, default=100, help='Number of samples for multimodal evaluation') #100
-    parser.add_argument('--mm_num_repeats', type=int, default=30, help='Number of repeats for multimodal evaluation')
+    parser.add_argument('--mm_num_repeats', type=int, default=1, help='Number of repeats for multimodal evaluation')
     parser.add_argument('--mm_num_times', type=int, default=10, help='Number of times for multimodal evaluation')
 
     parser.add_argument('--diversity_times', type=int, default=300, help='Number of times for diversity evaluation')

@@ -60,15 +60,15 @@ class RVQVAE(nn.Module):
         
         self.quantizer = ResidualVQ(**rvqvae_config)
     
-    def preprocess(self, x):
+    def preprocess(self, x): #(8, 300, 262)
         if self.dataset_name == "interhuman":
-            pos = x[..., :self.joints_num*3].reshape([x.shape[0], x.shape[1], self.joints_num, 3])
-            vel = x[..., self.joints_num*3 : self.joints_num*3*2].reshape([x.shape[0], x.shape[1], self.joints_num, 3])
+            pos = x[..., :self.joints_num*3].reshape([x.shape[0], x.shape[1], self.joints_num, 3])#(8, 300, 22, 3) batch, t, joint_num, pos
+            vel = x[..., self.joints_num*3 : self.joints_num*3*2].reshape([x.shape[0], x.shape[1], self.joints_num, 3])#(8, 300, 22, 3) 
             
-            rot = x[..., self.joints_num*3*2 : self.joints_num*3*2 + (self.joints_num-1)*6].reshape([x.shape[0], x.shape[1], self.joints_num-1, 6])
+            rot = x[..., self.joints_num*3*2 : self.joints_num*3*2 + (self.joints_num-1)*6].reshape([x.shape[0], x.shape[1], self.joints_num-1, 6])#(8, 300, 22, 6) 
             rot = torch.cat([torch.zeros(rot.shape[0], rot.shape[1], 1, 6).to(x.device), rot], dim=2)
             
-            joints = torch.cat([pos, vel, rot], dim=-1)
+            joints = torch.cat([pos, vel, rot], dim=-1)#(B, 300, 22, 12)
         else:
             joints = x
         joints = joints.permute(0, 3, 2, 1).float() # B, D=12, J=22, T 
@@ -90,15 +90,15 @@ class RVQVAE(nn.Module):
     def encode(self, x):
         # N, T, _, _ = x.shape
 
-        x_in = self.preprocess(x) # B, D=12, J=22, T || B, J=22xD=12, T
+        x_in = self.preprocess(x) # (B, D=12, J=22, T) || B, J=22xD=12, T
         x_encoder = self.encoder(x_in) # B, D=512, 5, T/2 || B, J=7xD=512, T//4
         
         
-        encoder_shape = x_encoder.shape
+        encoder_shape = x_encoder.shape #(B, 512, 5, 75)
         x_encoder = x_encoder if len(encoder_shape) == 3 else x_encoder.reshape(encoder_shape[0], encoder_shape[1], -1)
-        
+        #(B, 512, 375)
         code_idx, all_codes = self.quantizer.quantize(x_encoder, return_latent=True) # B,375,1; 1,B,512,375
-        return code_idx, all_codes
+        return code_idx, all_codes #(b, 375, 1), (1, b, 512, 375)
 
     def forward(self, x, verbose=False):
         

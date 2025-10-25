@@ -4,7 +4,7 @@ import argparse
 class TrainTransOptions(BaseOptions):
     def initialize(self):
         BaseOptions.initialize(self)
-        self.parser.add_argument('--batch_size', type=int, default=52, help='Batch size')
+        self.parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
         self.parser.add_argument('--max_epoch', type=int, default=500, help='Maximum number of epoch for training')
 
         '''LR scheduler'''

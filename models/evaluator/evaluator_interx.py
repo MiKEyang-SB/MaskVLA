@@ -52,7 +52,8 @@ class EvaluationDataset(Dataset):
                 pos_ohot = pos_ohot.detach().to(device).float()
                 
                 mm_num_now = len(mm_generated_motions)
-                is_mm = True if ((mm_num_now < mm_num_samples) and (i == mm_idxs[mm_num_now])) else False
+                # is_mm = True if ((mm_num_now < mm_num_samples) and (i == mm_idxs[mm_num_now])) else False
+                is_mm = False
                 repeat_times = mm_num_repeats if is_mm else 1
                 mm_motions = []
                 
