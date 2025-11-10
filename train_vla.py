@@ -53,7 +53,7 @@ class Config:
 
     #traing Parameters
     SEED: int = 1
-    wandb_enable: bool = False
+    wandb_enable: bool = True
     wandb_name: str = "MaskVLA"
     world_size: int = 0
     local_rank: int = -1
@@ -69,7 +69,7 @@ class Config:
     gradient_accumulation_steps: int = 1
     grad_norm: int = 200
     bar_steps: int = 1
-    log_steps: int = 1000
+    log_steps: int = 10
     save_steps: int = 10000
 
     #checkpoint
@@ -219,7 +219,7 @@ def train(config: Config) -> None:
                 #     param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-5)
                 if config.wandb_enable:
                     wandb_dict.update({
-                        'loss': losses, 
+                        'loss': losses.item(), 
                         'acc': acc,
                         'lr': current_lr, 
                         'global_step': global_step})

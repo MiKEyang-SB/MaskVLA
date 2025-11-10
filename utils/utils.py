@@ -47,9 +47,7 @@ def fixseed(seed):
 
 
 def setting(config):
-    if config.wandb_enable:
-        time_id = f"{time.strftime('%m%d-%H')}"
-        wandb.init(project='mini-diff', name=config.wandb_name + f"{time_id}_{str(uuid.uuid4())[:8]}", config = config)
+
     default_gpu, n_gpu, device = set_cuda(config)
 
     if default_gpu:
@@ -62,6 +60,14 @@ def setting(config):
     if config.local_rank != -1:
         seed += config.rank
     set_random_seed(seed)
+    if config.wandb_enable and default_gpu:
+        time_id = f"{time.strftime('%m%d-%H')}"
+        wandb.init(
+            project="MaskVLA",
+            name=f"{config.wandb_name}-{time_id}",
+            config=vars(config),   # 记录所有超参
+            reinit=True,
+        )
     return default_gpu, n_gpu, device
 
 def load_checkpoint(config, len_train_dataloader, model):

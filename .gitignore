@@ -173,3 +173,4 @@ CLIP
 en_core_web_sm-3.3.0
 run
 datasets.zip
+wandb
