@@ -7,19 +7,16 @@ from typing import Optional
 import wandb
 import draccus
 import torch
-import torch.distributed as dist
 import torch.optim as optim
 from tqdm import tqdm
 # from accelerate import PartialState
 # from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import AdamW
 from torch.utils.data import DataLoader
 # from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 # from transformers.modeling_outputs import CausalLMOutputWithPast
 from models.vla_vq.action_vqvae_wrapper import ActionVQVAELossWrapper
 # from models.vla.action_tokenizer import VQVAEActionTokenizer
-
 from models.vla.dataset import RLDSDataset, RLDSBatchTransform
 from models.mask_transformer.transformer import Mask_VLA_Agent
 # from PIL import Image
@@ -29,13 +26,15 @@ from utils.logger import LOGGER
 from utils.scheduler import update_lr_warm_up
 from utils.utils import setting, load_checkpoint
 from datetime import datetime
+from contextlib import nullcontext
+
 @dataclass
 class Config:
     # Model & Device Configuration
     image_sizes: tuple = (224, 224)
 
     # Directory Paths
-    data_root_dir: str = Path(os.path.expanduser("~")) / "ysz" / "MaskVLA" / "datasets" / "LIBERO_RLDS"
+    data_root_dir: str = "./datasets/LIBERO_RLDS"
     dataset_name: str = "libero_10_no_noops"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
 
     # Model & Device Configuration
@@ -60,7 +59,7 @@ class Config:
     cuda_device: int = 0
 
     output_dir = f"run/experiments/{datetime.now():%H-%M-%S}/"
-    batch_size: int = 128
+    batch_size: int = 256
     max_epochs: int = 50
     shuffle_buffer_size: int = 100_000 
     image_aug: bool = True
@@ -125,6 +124,17 @@ def train(config: Config) -> None:
         opt = config,
     ).to(device)
 
+    if torch.distributed.is_initialized():
+        vla_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(vla_model)
+    if torch.distributed.is_initialized():
+        vla_model = DDP(
+            vla_model,
+            device_ids=[config.local_rank] if torch.cuda.is_available() else None,
+            output_device=config.local_rank if torch.cuda.is_available() else None,
+            find_unused_parameters=False,
+            gradient_as_bucket_view=True,
+        )
+    
     torch.cuda.empty_cache()
     gc.collect() #clean rubbish
     # vla_vqvae_model.to(device)
@@ -145,10 +155,29 @@ def train(config: Config) -> None:
     )
     # collator = collate_fn()
     # print(vla_dataset.device)
+    if torch.distributed.is_initialized():
+        world_size = torch.distributed.get_world_size()
+        rank = torch.distributed.get_rank()
+        sampler = torch.utils.data.distributed.DistributedSampler(
+            vla_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+            drop_last=False,
+        )
+        shuffle_flag = False
+        pre_epoch = sampler.set_epoch
+
+    else:
+        sampler = None
+        shuffle_flag = False  # RLDS/TFDS 自己有随机性时建议 False
+        pre_epoch = lambda e: None
+
     train_dataloader = DataLoader(
         vla_dataset,
         batch_size=config.batch_size,
-        sampler=None,
+        sampler=sampler,
+        shuffle=shuffle_flag,
         # collate_fn=collate_fn(),
         num_workers=0,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
         # pin_memory=True, 
@@ -158,7 +187,16 @@ def train(config: Config) -> None:
     LOGGER.info('-----dataset lens-------:', len_train_dataloader)
     LOGGER.info("Model: nweights %d nparams %d" % (vla_model.num_parameters))#17,649,632个参数
     LOGGER.info("Model: trainable nweights %d nparams %d" % (vla_model.num_trainable_parameters))
-    global_step, restart_epoch = load_checkpoint(config, len_train_dataloader, vla_model)
+
+    _model_for_ckpt = vla_model.module if isinstance(vla_model, DDP) else vla_model
+    global_step, restart_epoch = load_checkpoint(config, len_train_dataloader, _model_for_ckpt)
+
+    if torch.distributed.is_initialized():
+        obj = [global_step, restart_epoch]
+        torch.distributed.broadcast_object_list(obj, src=0)
+        global_step, restart_epoch = obj
+        torch.distributed.barrier()
+
     if default_gpu:
         save_training_meta(config)
         model_saver = ModelSaver(os.path.join(config.output_dir, 'ckpts'))
@@ -170,9 +208,7 @@ def train(config: Config) -> None:
         pbar = NoOp()
     
     #------------------save----------------
-
-    #这两个不一致，看一下什么原因，明天把评估写好，并且使用wandb训练成功，写好分布式训练
-    #写完开题所有材料
+        
 
     optimizer = optim.AdamW(vla_model.parameters(), 
                             betas=(0.9, 0.99), 
@@ -185,24 +221,31 @@ def train(config: Config) -> None:
                                                 milestones=milestones,
                                                 gamma=config.gamma)
     
-    # if config.world_size > 1:
-    #     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
     #分布式训练要看vqae的内容
-    if config.wandb_enable:
+    if config.wandb_enable and default_gpu:
         wandb_dict = {}
+
+    scaler = None
+    use_amp = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    amp_dtype = torch.bfloat16 if use_amp else torch.float32
 
     vla_model.train()
     vla_vqvae_model.eval()
 
     optimizer.zero_grad()
     running_metrics = {}
-    for epoch in range(restart_epoch, config.max_epochs):
+    for epoch_id in range(restart_epoch, config.max_epochs):
+        pre_epoch(epoch_id)
         for step, batch in enumerate(train_dataloader):
-
-            losses, acc, _, _, _ = vla_model(batch)
-            if config.gradient_accumulation_steps > 1:  # average loss
-                losses= losses / config.gradient_accumulation_steps
-            losses.backward() #to wandb
+            need_sync = ((step + 1) % config.gradient_accumulation_steps == 0)
+            ddp_ctx = (vla_model.no_sync() if isinstance(vla_model, DDP) and not need_sync else nullcontext())
+            with ddp_ctx:
+                with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+                    losses, acc, _, _, _ = vla_model(batch)
+                if config.gradient_accumulation_steps > 1:  # average loss
+                    losses= losses / config.gradient_accumulation_steps
+                losses.backward() #to wandb
 
             if (step + 1) % config.gradient_accumulation_steps == 0:
                 global_step += 1
@@ -217,10 +260,10 @@ def train(config: Config) -> None:
                     current_lr = optimizer.param_groups[0]["lr"]
                 # for kp, param_group in enumerate(optimizer.param_groups):
                 #     param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-5)
-                if config.wandb_enable:
+                if config.wandb_enable and default_gpu:
                     wandb_dict.update({
                         'loss': losses.item(), 
-                        'acc': acc,
+                        'acc': acc.item(),
                         'lr': current_lr, 
                         'global_step': global_step})
 
@@ -228,7 +271,7 @@ def train(config: Config) -> None:
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         vla_model.parameters(), config.grad_norm
                     )
-                    if config.wandb_enable:
+                    if config.wandb_enable and default_gpu:
                         wandb_dict.update({'grad_norm': grad_norm})
                 optimizer.step()
                 scheduler.step()
@@ -236,23 +279,25 @@ def train(config: Config) -> None:
             if global_step % config.bar_steps == 0:
                 pbar.update(config.bar_steps)#更新进度条
 
-            if global_step % config.log_steps == 0 and config.wandb_enable:
-                # LOGGER.info(
-                #     f'==============Epoch {epoch} Step {global_step}===============')
-                # LOGGER.info(', '.join(['%s:%.4f' % (lk, lv.val) for lk, lv in running_metrics.items()]))
-                # LOGGER.info('===============================================')
+            if global_step % config.log_steps == 0 and config.wandb_enable and default_gpu:
                 wandb.log(wandb_dict) 
-            if global_step % config.save_steps == 0:
-                model_saver.save(vla_model, global_step, optimizer=optimizer, rewrite_optimizer=True)
-    if global_step % config.save_steps != 0:
-        # LOGGER.info(
-        #     f'==============Epoch {epoch} Step {global_step}===============')
-        # LOGGER.info(', '.join(['%s:%.4f' % (lk, lv.val) for lk, lv in running_metrics.items()]))
-        # LOGGER.info('===============================================')
-        model_saver.save(vla_model, global_step, optimizer=optimizer, rewrite_optimizer=True)
-    if config.wandb_enable:
+
+            if global_step % config.save_steps == 0 and default_gpu:
+                _to_save = vla_model.module if isinstance(vla_model, DDP) else vla_model
+                model_saver.save(_to_save, global_step, optimizer=optimizer, rewrite_optimizer=True)
+                if torch.distributed.is_initialized():
+                    torch.distributed.barrier()
+
+    if global_step % config.save_steps != 0 and default_gpu:
+        _to_save = vla_model.module if isinstance(vla_model, DDP) else vla_model
+        model_saver.save(_to_save, global_step, optimizer=optimizer, rewrite_optimizer=True)
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+
+    if config.wandb_enable and default_gpu:
         wandb.finish()
 
 
 if __name__ == '__main__':
     train()
+    # CUDA_VISIBLE_DEVICES=1,3 torchrun --nproc_per_node=2 train.py
