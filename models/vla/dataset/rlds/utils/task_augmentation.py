@@ -8,7 +8,7 @@ from typing import Dict
 
 import tensorflow as tf
 
-from models.vla.datasets.rlds.utils.data_utils import to_padding
+from models.vla.dataset.rlds.utils.data_utils import to_padding
 
 
 def delete_task_conditioning(traj: Dict, keep_image_prob: float) -> Dict:

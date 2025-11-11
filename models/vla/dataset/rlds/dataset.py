@@ -16,9 +16,9 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from models.overwatch import initialize_overwatch
-from models.vla.datasets.rlds import obs_transforms, traj_transforms
-from models.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
-from models.vla.datasets.rlds.utils.data_utils import (
+from models.vla.dataset.rlds import obs_transforms, traj_transforms
+from models.vla.dataset.rlds.utils import goal_relabeling, task_augmentation
+from models.vla.dataset.rlds.utils.data_utils import (
     NormalizationType,
     allocate_threads,
     get_dataset_statistics,

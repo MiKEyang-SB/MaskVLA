@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from models.overwatch import initialize_overwatch
-from models.vla.datasets.rlds.oxe.configs import OXE_DATASET_CONFIGS, ActionEncoding
-from models.vla.datasets.rlds.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
-from models.vla.datasets.rlds.utils.data_utils import NormalizationType
+from models.vla.dataset.rlds.oxe.configs import OXE_DATASET_CONFIGS, ActionEncoding
+from models.vla.dataset.rlds.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
+from models.vla.dataset.rlds.utils.data_utils import NormalizationType
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
