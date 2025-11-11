@@ -20,9 +20,9 @@ from transformers import PreTrainedTokenizerBase
 # from prismatic.models.backbones.vision import ImageTransform
 # from prismatic.util.data_utils import tree_map
 # from prismatic.vla.action_tokenizer import ActionTokenizer, VQVAEActionTokenizer
-from models.vla.datasets.rlds import make_interleaved_action_dataset, make_interleaved_dataset, make_single_dataset
-from models.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
-from models.vla.datasets.rlds.utils.data_utils import NormalizationType
+from models.vla.dataset.rlds import make_interleaved_action_dataset, make_interleaved_dataset, make_single_dataset
+from models.vla.dataset.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
+from models.vla.dataset.rlds.utils.data_utils import NormalizationType
 from models.vla.action_tokenizer import ActionTokenizer, VQVAEActionTokenizer
 from models.vla_vq.action_vqvae_wrapper import ActionVQVAELossWrapper
 from utils.transforms import *
