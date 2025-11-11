@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 # from transformers.modeling_outputs import CausalLMOutputWithPast
 from models.vla_vq.action_vqvae_wrapper import ActionVQVAELossWrapper
 # from models.vla.action_tokenizer import VQVAEActionTokenizer
-from models.vla.dataset import RLDSDataset, RLDSBatchTransform
+from models.vla.dataset import RLDSDataset, RLDSBatchTransform, ShardIterable
 from models.mask_transformer.transformer import Mask_VLA_Agent
 # from PIL import Image
 from utils.save import ModelSaver, save_training_meta
@@ -59,7 +59,7 @@ class Config:
     cuda_device: int = 0
 
     output_dir = f"run/experiments/{datetime.now():%H-%M-%S}/"
-    batch_size: int = 256
+    batch_size: int = 1024
     max_epochs: int = 50
     shuffle_buffer_size: int = 100_000 
     image_aug: bool = True
@@ -158,15 +158,17 @@ def train(config: Config) -> None:
     if torch.distributed.is_initialized():
         world_size = torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            vla_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True,
-            drop_last=False,
-        )
+        # sampler = torch.utils.data.distributed.DistributedSampler(
+        #     vla_dataset,
+        #     num_replicas=world_size,
+        #     rank=rank,
+        #     shuffle=True,
+        #     drop_last=False,
+        # )
+        vla_dataset_sharded = ShardIterable(vla_dataset, rank=rank, world_size=world_size)
         shuffle_flag = False
-        pre_epoch = sampler.set_epoch
+        # pre_epoch = sampler.set_epoch
+        pre_epoch = lambda e: None
 
     else:
         sampler = None
@@ -174,19 +176,19 @@ def train(config: Config) -> None:
         pre_epoch = lambda e: None
 
     train_dataloader = DataLoader(
-        vla_dataset,
+        vla_dataset_sharded,
         batch_size=config.batch_size,
-        sampler=sampler,
-        shuffle=shuffle_flag,
+        # sampler=sampler,
+        # shuffle=shuffle_flag,
         # collate_fn=collate_fn(),
         num_workers=0,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
         # pin_memory=True, 
     )
     len_train_dataloader = len(train_dataloader)
     total_iters = len_train_dataloader * config.max_epochs
-    LOGGER.info('-----dataset lens-------:', len_train_dataloader)
-    LOGGER.info("Model: nweights %d nparams %d" % (vla_model.num_parameters))#17,649,632个参数
-    LOGGER.info("Model: trainable nweights %d nparams %d" % (vla_model.num_trainable_parameters))
+    # LOGGER.info('-----dataset lens-------:', len_train_dataloader)
+    # LOGGER.info("Model: nweights %d nparams %d" % (vla_model.num_parameters))#17,649,632个参数
+    # LOGGER.info("Model: trainable nweights %d nparams %d" % (vla_model.num_trainable_parameters))
 
     _model_for_ckpt = vla_model.module if isinstance(vla_model, DDP) else vla_model
     global_step, restart_epoch = load_checkpoint(config, len_train_dataloader, _model_for_ckpt)
@@ -300,4 +302,4 @@ def train(config: Config) -> None:
 
 if __name__ == '__main__':
     train()
-    # CUDA_VISIBLE_DEVICES=1,3 torchrun --nproc_per_node=2 train.py
+    # CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train_vla.py --wandb_enable False

@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from PIL import Image
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import Dataset, IterableDataset, get_worker_info
 from transformers import PreTrainedTokenizerBase
 
 # from prismatic.models.backbones.llm.prompting import PromptBuilder
@@ -331,6 +331,53 @@ class VqVAERLDSDataset(IterableDataset):
     # === Explicitly Unused ===
     def __getitem__(self, idx: int) -> None:
         raise NotImplementedError("IterableDataset does not implement map-style __getitem__; see __iter__ instead!")
+
+class ShardIterable(IterableDataset):
+    def __init__(self, base_iterable, rank=0, world_size=1):
+        super().__init__()
+        self.base = base_iterable
+        self.rank = rank
+        self.world_size = world_size
+
+        # 尝试获取底层数据集长度（如果有 __len__）
+        try:
+            self._base_len = len(base_iterable)
+        except TypeError:
+            self._base_len = None  # 底层数据集没有定义长度
+
+    def __iter__(self):
+        worker = get_worker_info()
+        if worker is None:
+            # 单 worker
+            worker_id = 0
+            num_workers = 1
+        else:
+            worker_id = worker.id
+            num_workers = worker.num_workers
+
+        # 全局并行度 = world_size(DDP) × num_workers(DataLoader)
+        stride = self.world_size * num_workers
+        # 当前消费起点 = rank * num_workers + worker_id
+        offset = self.rank * num_workers + worker_id
+
+        for i, sample in enumerate(self.base):
+            if (i % stride) == offset:
+                yield sample
+
+    def __len__(self):
+        """
+        返回该 rank 所负责的数据样本数。
+        如果底层数据集有长度，则除以 world_size；
+        否则返回估计值或报错。
+        """
+        if self._base_len is not None:
+            # 每个 rank roughly 分得 1/world_size 的样本
+            shard_len = max(1, self._base_len // max(1, self.world_size))
+            return shard_len
+        else:
+            # 如果底层没有定义长度（比如纯 TFDS 流式），给个估计值
+            # 这里可以改成 config.steps_per_epoch
+            return 1000
 
 
 class RLDSDataset(IterableDataset):

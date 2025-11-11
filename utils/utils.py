@@ -9,7 +9,7 @@ from utils.logger import LOGGER
 from utils.distributed import set_cuda
 import os
 import uuid
-
+import torch.distributed as dist
 def print_current_loss(start_time, niter_state, total_niters, losses, epoch=None, sub_epoch=None,
                        inner_iter=None, tf_ratio=None, sl_steps=None):
 
@@ -47,9 +47,14 @@ def fixseed(seed):
 
 
 def setting(config):
-
     default_gpu, n_gpu, device = set_cuda(config)
-
+    if dist.is_initialized():
+        config.rank = dist.get_rank()
+        config.world_size = dist.get_world_size()
+    else:
+        config.rank = 0
+        config.world_size = 1
+        
     if default_gpu:
         LOGGER.info(
             'device: {}, n_gpu: {}, distributed training: {}'.format(

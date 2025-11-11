@@ -9,4 +9,5 @@ from .datasets import (
     RLDSNoiseActionBatchTransform,
     # RLDSVQBatchTransform,
     VqVAERLDSDataset,
+    ShardIterable,
 )
