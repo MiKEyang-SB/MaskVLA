@@ -35,7 +35,7 @@ class Config:
     image_sizes: tuple = (224, 224)
 
     # Directory Paths
-    data_root_dir: str = Path(os.path.expanduser("~")) / "MaskVLA" / "datasets" / "LIBERO_RLDS"
+    data_root_dir: str = Path(os.path.expanduser("~")) / "ysz" / "MaskVLA" / "datasets" / "LIBERO_RLDS"
     dataset_name: str = "libero_10_no_noops"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
 
     # Model & Device Configuration
