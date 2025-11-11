@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 from models.vla_vq.action_vqvae_wrapper import ActionVQVAELossWrapper
 # from models.vla.action_tokenizer import VQVAEActionTokenizer
 
-from models.vla.datasets import RLDSDataset, RLDSBatchTransform
+from models.vla.dataset import RLDSDataset, RLDSBatchTransform
 from models.mask_transformer.transformer import Mask_VLA_Agent
 # from PIL import Image
 from utils.save import ModelSaver, save_training_meta
@@ -35,7 +35,7 @@ class Config:
     image_sizes: tuple = (224, 224)
 
     # Directory Paths
-    data_root_dir: str = Path("/home/mike/MaskVLA/datasets/LIBERO_RLDS") 
+    data_root_dir: str = Path(os.path.expanduser("~")) / "MaskVLA" / "datasets" / "LIBERO_RLDS"
     dataset_name: str = "libero_10_no_noops"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
 
     # Model & Device Configuration

@@ -33,3 +33,4 @@ positional-encodings==6.0.3
 hydra-core==1.1.1
 tensorboardX
 numpy==1.26.4
+huggingface_hub-0.27.0
