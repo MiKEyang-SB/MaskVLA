@@ -282,7 +282,7 @@ def train(config: Config) -> None:
                 if config.wandb_enable and default_gpu:
                     wandb_dict.update({
                         'loss': losses.item(), 
-                        'acc': acc.item(),
+                        'acc': acc,
                         'lr': current_lr, 
                         'global_step': global_step})
 
