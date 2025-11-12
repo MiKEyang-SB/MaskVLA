@@ -27,7 +27,7 @@ from utils.scheduler import update_lr_warm_up
 from utils.utils import setting, load_checkpoint
 from datetime import datetime
 from contextlib import nullcontext
-
+import tqdm
 @dataclass
 class Config:
     # Model & Device Configuration
@@ -59,8 +59,9 @@ class Config:
     cuda_device: int = 0
 
     output_dir = f"run/experiments/{datetime.now():%H-%M-%S}/"
-    batch_size: int = 1024
+    batch_size: int = 256
     max_epochs: int = 50
+    max_steps: int = 20000
     shuffle_buffer_size: int = 100_000 
     image_aug: bool = True
     learning_rate: float = 2e-4
@@ -171,6 +172,7 @@ def train(config: Config) -> None:
         pre_epoch = lambda e: None
 
     else:
+        vla_dataset_sharded = vla_dataset
         sampler = None
         shuffle_flag = False  # RLDS/TFDS 自己有随机性时建议 False
         pre_epoch = lambda e: None
@@ -202,12 +204,12 @@ def train(config: Config) -> None:
     if default_gpu:
         save_training_meta(config)
         model_saver = ModelSaver(os.path.join(config.output_dir, 'ckpts'))
-        pbar = tqdm(initial=global_step, total=total_iters)
+        # pbar = tqdm(initial=global_step, total=total_iters)
         # add_log_to_file(os.path.join(config.output_dir, 'logs', 'log.txt'))
     else:
         LOGGER.disabled = True
         model_saver = NoOp()
-        pbar = NoOp()
+        # pbar = NoOp()
     
     #------------------save----------------
         
@@ -237,17 +239,32 @@ def train(config: Config) -> None:
 
     optimizer.zero_grad()
     running_metrics = {}
-    for epoch_id in range(restart_epoch, config.max_epochs):
-        pre_epoch(epoch_id)
+    import time
+    # for epoch_id in range(restart_epoch, config.max_epochs):
+    #     pre_epoch(epoch_id)
+    with tqdm.tqdm(total=config.max_steps, leave=False) as progress: #rlds格式数据集，在下面的循环里面永远不会结束，需要break结束，而且没有上层循环
         for step, batch in enumerate(train_dataloader):
+            # torch.cuda.synchronize()
+            # t0 = time.time()
             need_sync = ((step + 1) % config.gradient_accumulation_steps == 0)
             ddp_ctx = (vla_model.no_sync() if isinstance(vla_model, DDP) and not need_sync else nullcontext())
             with ddp_ctx:
                 with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+                    # torch.cuda.synchronize()
+                    # t1 = time.time()
                     losses, acc, _, _, _ = vla_model(batch)
-                if config.gradient_accumulation_steps > 1:  # average loss
-                    losses= losses / config.gradient_accumulation_steps
+                    # torch.cuda.synchronize()
+                    # t2 = time.time()
+                losses= losses / config.gradient_accumulation_steps
                 losses.backward() #to wandb
+                # torch.cuda.synchronize()
+                # t3 = time.time()
+            # if default_gpu and step % config.log_steps == 0:
+            #     print(
+            #         f"[Epoch {epoch_id} | Step {step}] "
+            #         f"data: {t1 - t0:.3f}s, fwd: {t2 - t1:.3f}s, bwd: {t3 - t2:.3f}s, total: {t3 - t0:.3f}s"
+            #     )
+            gradient_step_idx = step // config.gradient_accumulation_steps
 
             if (step + 1) % config.gradient_accumulation_steps == 0:
                 global_step += 1
@@ -278,17 +295,22 @@ def train(config: Config) -> None:
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-            if global_step % config.bar_steps == 0:
-                pbar.update(config.bar_steps)#更新进度条
+                progress.update()
+            # if global_step % config.bar_steps == 0:
+            #     pbar.update(config.bar_steps)#更新进度条
 
             if global_step % config.log_steps == 0 and config.wandb_enable and default_gpu:
                 wandb.log(wandb_dict) 
 
-            if global_step % config.save_steps == 0 and default_gpu:
+            if gradient_step_idx % config.save_steps == 0 and default_gpu:
                 _to_save = vla_model.module if isinstance(vla_model, DDP) else vla_model
                 model_saver.save(_to_save, global_step, optimizer=optimizer, rewrite_optimizer=True)
                 if torch.distributed.is_initialized():
                     torch.distributed.barrier()
+            if gradient_step_idx == config.max_steps:               
+                print(f"Max step {config.max_steps} reached! Stopping training...")
+                break
+            
 
     if global_step % config.save_steps != 0 and default_gpu:
         _to_save = vla_model.module if isinstance(vla_model, DDP) else vla_model

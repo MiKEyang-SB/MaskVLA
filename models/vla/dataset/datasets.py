@@ -205,7 +205,8 @@ class RLDSBatchTransform:
         action = rlds_batch["action"][self.image_window_size - 1 :] #array(5, 7)
         # img = [rlds_batch["observation"]["image_primary"][t] for t in range(self.image_window_size)] #[array(224,224,3)]
         img = rlds_batch["observation"]["image_primary"][0]
-        img_tensor = torch.from_numpy(img).permute(2, 0, 1).float()
+        # img_tensor = torch.from_numpy(img).permute(2, 0, 1).float()
+        img_tensor = torch.from_numpy(np.array(img, copy=True)).permute(2, 0, 1).float()
         img_tensor = self.image_transform(img_tensor.unsqueeze(0))#注意这里是不是/255的
 
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
