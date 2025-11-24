@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 import torch
-
+from models.mask_transformer.transformer import Mask_VLA_Agent
 from experiments.robot.openvla_utils import (
     get_vla,
     get_vla_action,
@@ -63,15 +63,27 @@ def get_image_resize_size(cfg):
     return resize_size
 
 
-def get_action(cfg, model, obs, task_label, processor=None):
+def get_action(cfg, vqvae_model, model, obs, task_label, processor=None):
     """Queries the model to get an action."""
-    if cfg.model_family == "openvla" or cfg.model_family == "vqvla":
-        action = get_vla_action(
-            model, processor, cfg.pretrained_checkpoint, obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop
-        )
-        assert action.shape[-1] == ACTION_DIM
-    else:
-        raise ValueError("Unexpected `model_family` found in config.")
+    # if cfg.model_family == "openvla" or cfg.model_family == "vqvla":
+        # action = get_vla_action(
+        #     model, processor, cfg.pretrained_checkpoint, obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop
+        # )
+    #     assert action.shape[-1] == ACTION_DIM
+    # else:
+    #     raise ValueError("Unexpected `model_family` found in config.")
+    # action = 
+    #deal obs
+    
+    ids = model.generate(img_tensor, 
+                         lang, 
+                         timesteps, 
+                         cond_scale, 
+                         temperature, 
+                         topk_filter_thres,
+                         gsample,
+                         force_mask)
+    action = vqvae_model.decode(ids)
     return action
 
 
@@ -104,9 +116,25 @@ def invert_gripper_action(action):
     action[..., -1] = action[..., -1] * -1.0
     return action
 
-def get_maskvla(cfg):
+def get_maskvla(config):
     """Loads and returns a VLA model from checkpoint."""
     # Load VLA checkpoint.
+    vla_model = Mask_VLA_Agent(
+        code_dim = config.code_dim,
+        cond_mode='text',
+        latent_dim = config.latent_dim,
+        ff_size = config.ff_size,
+        num_layers = config.num_layers,
+        num_heads = config.num_heads,
+        dropout = config.dropout,
+        clip_dim = 512,
+        cond_drop_prob = config.cond_drop_prob,
+        lang_clip_version = config.clip_version,
+        num_tokens = config.num_tokens,
+        device = config.device,
+        opt = config,
+    )
     print("[*] Instantiating Pretrained VLA model")
     print("[*] Loading in BF16 with Flash-Attention Enabled")
     #载入模型
+    return vla_model

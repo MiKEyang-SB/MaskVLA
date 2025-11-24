@@ -697,7 +697,7 @@ class Mask_VLA_Agent(BaseModel):
         self.cond_mode = cond_mode
         self.cond_drop_prob = cond_drop_prob
         self.device = device
-
+        self.vq_action_dim = opt.vq_action_dim
         self.language_clip = LangClip(model_name=lang_clip_version)
 
         self.img_resnet = BesoResNetEncoder(self.img_latent_dim)
@@ -726,7 +726,7 @@ class Mask_VLA_Agent(BaseModel):
         self.cond_ln = nn.LayerNorm(self.latent_dim, bias = True)
         _num_tokens = num_tokens + 1
         self.mask_id = num_tokens
-        # self.pad_id = num_tokens + 1
+        self.pad_id = num_tokens + 1
         # self.sep_id = num_tokens + 2
 
         self.token_emb = nn.Embedding(_num_tokens, self.code_dim)#256+1,512
@@ -994,21 +994,20 @@ class Mask_VLA_Agent(BaseModel):
         return cal_performance(step_unroll_logits, labels, ignore_index=self.mask_id)
 
     def forward_with_cond_scale(self,
-                                motion_ids,
+                                discretized_action_ids,
                                 cond_vector,
-                                padding_mask,
-                                cond_scale=3,
+                                cond_scale=3, #classifire-free >1则模型更听条件的
                                 force_mask=False):
         # bs = motion_ids.shape[0]
         # if cond_scale == 1:
         if force_mask:
-            return self.trans_forward(motion_ids, cond_vector, padding_mask, force_mask=True)
+            return self.trans_forward(discretized_action_ids, cond_vector, force_mask=True)
 
-        logits = self.trans_forward(motion_ids, cond_vector, padding_mask)
+        logits = self.trans_forward(discretized_action_ids, cond_vector)
         if cond_scale == 1:
             return logits
 
-        aux_logits = self.trans_forward(motion_ids, cond_vector, padding_mask, force_mask=True)
+        aux_logits = self.trans_forward(discretized_action_ids, cond_vector, force_mask=True)
 
         scaled_logits = aux_logits + (logits - aux_logits) * cond_scale
         return scaled_logits
@@ -1019,27 +1018,19 @@ class Mask_VLA_Agent(BaseModel):
                  img_tensor,
                  lang,
                 #  m_lens,
+                #  nbp: int, #w//5
                  timesteps: int,
                  cond_scale: int, #classifire-free
                  temperature=1,
-                 topk_filter_thres=0.9,
-                 gsample=False,
+                 topk_filter_thres=0.9, #top-k filter
+                 gsample=False, #Gumbel-Softmax sample
                  force_mask=False
                  ):
 
-        # device = next(self.parameters()).device
+        device = next(self.parameters()).device
         # seq_len = max(m_lens)
-        # batch_size = len(m_lens)
+        batch_size = len(lang)
         # token_lengths = m_lens*2
-
-        # if self.cond_mode == 'text':
-        #     cond_vector = self.encode_text(conds)
-        # elif self.cond_mode == 'action':
-        #     cond_vector = self.enc_action(conds).to(device)
-        # elif self.cond_mode == 'uncond':
-        #     cond_vector = torch.zeros(batch_size, self.latent_dim).float().to(device)
-        # else:
-        #     raise NotImplementedError("Unsupported condition mode!!!")
         img_vector = self.encode_img(img_tensor)#(B, 1, 512)
         text_vector = self.encode_text(lang) #(B, 1, 512)
         cond = torch.cat([img_vector, text_vector], dim = 1)#(B, 2, 512)
@@ -1050,11 +1041,22 @@ class Mask_VLA_Agent(BaseModel):
 
         # padding_mask = ~lengths_to_mask(m_lens, seq_len) #这两个直接设
         # padding_mask = padding_mask.repeat(1, self.nbp)
-        token_lengths = token_lengths*self.nbp
+        # padding_mask = torch.arange(max_len, device=lengths.device).repeat(len(lengths), 2) < lengths.unsqueeze(1)
+        padding_mask = torch.ones(
+            (batch_size, self.vq_action_dim, self.nbp),
+            device=cond.device,
+            dtype=torch.bool
+        ).view(batch_size, -1)
+        #(B, 2*4) all True
+        token_lengths = torch.full(
+            (batch_size, ),
+             self.vq_action_dim * self.nbp,
+             device=device,
+        )#(B,) all self.vq_action_dim * self.nbp
 
         # Start from all tokens being masked
-        ids = torch.where(padding_mask, self.pad_id, self.mask_id)#全部mask的token
-        scores = torch.where(padding_mask, 1e5, 0.)
+        ids = torch.where(padding_mask, self.pad_id, self.mask_id)#True就选pad_id，False选mask_id
+        scores = torch.where(padding_mask, 1e5, 0.) #(B, 2*4)
         starting_temperature = temperature
 
         for timestep, steps_until_x0 in zip(torch.linspace(0, 1, timesteps, device=device), reversed(range(timesteps))):
@@ -1078,8 +1080,8 @@ class Mask_VLA_Agent(BaseModel):
             Preparing input
             '''
             # (b, num_token, seqlen)
-            logits = self.forward_with_cond_scale(ids, cond_vector=cond_vector,
-                                                #   padding_mask=padding_mask,
+            logits = self.forward_with_cond_scale(ids, 
+                                                  cond_vector=cond_vector,
                                                   cond_scale=cond_scale,
                                                   force_mask=force_mask)    
             #  logits = logits_cond + s*(logits_cond - logits_uncond)

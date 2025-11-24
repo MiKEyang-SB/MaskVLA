@@ -40,10 +40,10 @@ class GenerateConfig:
     #################################################################################################################
     # LIBERO environment-specific parameters
     #################################################################################################################
-    task_suite_name: str = "libero_spatial"          # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
+    task_suite_name: str = "libero_10_no_noops"          # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     num_steps_wait: int = 10                         # Number of steps to wait for objects to stabilize in sim
     num_trials_per_task: int = 50                    # Number of rollouts per task
-
+    
     #################################################################################################################
     # Utils
     #################################################################################################################
@@ -60,6 +60,8 @@ class GenerateConfig:
     vqvae_ckpt: str = ""
 
     image_history_size: int = 1
+
+    image_sizes: int = 224
 
 
 @draccus.wrap()
@@ -93,7 +95,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
     print(f"Task suite: {cfg.task_suite_name}")
     log_file.write(f"Task suite: {cfg.task_suite_name}\n")
 
-    resize_size = get_image_resize_size(cfg)
+    resize_size = cfg.image_sizes #224
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
         # Get task
@@ -103,7 +105,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
         initial_states = task_suite.get_task_init_states(task_id)
 
         # Initialize LIBERO environment and task description
-        env, task_description = get_libero_env(task, cfg.model_family, resolution=256)
+        env, task_description = get_libero_env(task, model, resolution=256)
         # Start episodes
         task_episodes, task_successes = 0, 0
         for episode_idx in tqdm.tqdm(range(cfg.num_trials_per_task)):
@@ -151,7 +153,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     ),
                 }
                 #action
-                actions = get_action(
+                actions = get_action( #这一步是怎么回归的
                     cfg,
                     model,
                     observation,

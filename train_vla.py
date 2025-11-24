@@ -92,6 +92,7 @@ class Config:
     num_tokens: int = 256 #logits的置信度的大小softmax,vq的codesize
     mask_type: str = '1D'
     step_unroll: int = 1
+    vq_action_dim: int = 4
 
 
 @draccus.wrap()
