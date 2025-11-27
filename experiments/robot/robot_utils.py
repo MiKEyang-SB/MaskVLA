@@ -7,11 +7,11 @@ import time
 import numpy as np
 import torch
 from models.mask_transformer.transformer import Mask_VLA_Agent
-from experiments.robot.openvla_utils import (
-    get_vla,
-    get_vla_action,
-    get_vqvla,
-)
+# from experiments.robot.openvla_utils import (
+#     get_vla,
+#     get_vla_action,
+#     get_vqvla,
+# )
 
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
@@ -38,16 +38,16 @@ def set_seed_everywhere(seed: int):
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def get_model(cfg, wrap_diffusion_policy_for_droid=False):
-    """Load model for evaluation."""
-    if cfg.model_family == "openvla":
-        model = get_vla(cfg)
-    elif cfg.model_family == "vqvla":
-        model = get_vqvla(cfg)
-    else:
-        raise ValueError("Unexpected `model_family` found in config.")
-    print(f"Loaded model: {type(model)}")
-    return model
+# def get_model(cfg, wrap_diffusion_policy_for_droid=False):
+#     """Load model for evaluation."""
+#     if cfg.model_family == "openvla":
+#         model = get_vla(cfg)
+#     elif cfg.model_family == "vqvla":
+#         model = get_vqvla(cfg)
+#     else:
+#         raise ValueError("Unexpected `model_family` found in config.")
+#     print(f"Loaded model: {type(model)}")
+#     return model
 
 
 def get_image_resize_size(cfg):
@@ -63,27 +63,63 @@ def get_image_resize_size(cfg):
     return resize_size
 
 
-def get_action(cfg, vqvae_model, model, obs, task_label, processor=None):
-    """Queries the model to get an action."""
-    # if cfg.model_family == "openvla" or cfg.model_family == "vqvla":
-        # action = get_vla_action(
-        #     model, processor, cfg.pretrained_checkpoint, obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop
-        # )
-    #     assert action.shape[-1] == ACTION_DIM
-    # else:
-    #     raise ValueError("Unexpected `model_family` found in config.")
-    # action = 
-    #deal obs
-    
-    ids = model.generate(img_tensor, 
-                         lang, 
-                         timesteps, 
-                         cond_scale, 
-                         temperature, 
-                         topk_filter_thres,
-                         gsample,
-                         force_mask)
-    action = vqvae_model.decode(ids)
+def get_action(cfg, vqvae_model, vla_model, obs):
+    """
+    Queries the model to get an action.
+
+    Args:
+        cfg: Configuration object with model parameters
+        vqvae_model: ActionVQVAELossWrapper model for decoding
+        vla_model: Mask_VLA_Agent model for generating action tokens
+        obs: Observation dictionary containing:
+            - img_tensor: (1, 3, 224, 224) processed image tensor
+            - lang: str, language instruction (lowercase)
+
+    Returns:
+        action: (window_size, 7) decoded action sequence
+    """
+    # Extract observation components
+    img_tensor = obs['img_tensor']  # (1, 3, 224, 224)
+    lang = [obs['lang']]  # Convert to list for batch processing
+
+    # Generate action token IDs using MaskVLA model
+    # ids shape: (batch_size, vq_action_dim * nbp) = (1, 4*2) = (1, 8)
+    ids = vla_model.generate(
+        img_tensor=img_tensor,
+        lang=lang,
+        timesteps=getattr(cfg, 'timesteps', 20),  # Number of denoising steps
+        cond_scale=getattr(cfg, 'cond_scale', 3),  # Classifier-free guidance scale
+        temperature=getattr(cfg, 'temperature', 1.0),
+        topk_filter_thres=getattr(cfg, 'topk_filter_thres', 0.9),
+        gsample=getattr(cfg, 'gsample', False),
+        force_mask=False
+    ) #(1,8)
+
+    # Reshape ids for VQVAE decoding
+    # ids: (1, 8) -> (1, 2, 4) where 2 = nbp, 4 = vq_action_dim
+    batch_size = ids.shape[0]
+    vq_action_dim = cfg.vq_action_dim  # 4
+    nbp = cfg.window_size // 5  # 10 // 5 = 2
+    ids = ids.view(batch_size, nbp, vq_action_dim)  # (1, 2, 4)
+
+    # Get latent embeddings from VQ codebook
+    # z_embed: (1, 2, 128) where 128 = n_latent_dims
+    z_embed = vqvae_model.draw_code_forward(ids)
+    n_latent_dims = z_embed.shape[-1]
+    # # Flatten latent for decoding
+    # # z_embed: (1, 2, 128) -> (1, 256)
+    # z_embed_flat = z_embed.view(batch_size, -1) #(1,2,128)
+    z_embed_flat = z_embed.reshape(-1, n_latent_dims) #(b*nbp, vq_action_dim)
+
+    # Decode latent to actions
+    # action: (1, window_size, 7) = (1, 10, 7)
+    action = vqvae_model.get_action_from_latent(
+        latent=z_embed_flat,
+        robot_type=None,
+        control_frequency=None
+    )#(b*nbp,5,7)
+    action = action.reshape(batch_size, -1, 7)
+
     return action
 
 

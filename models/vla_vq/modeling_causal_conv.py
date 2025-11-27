@@ -86,7 +86,7 @@ class CausalConv2d(nn.Module):
         # temporal_chunk: whether to use the temporal chunk
         # breakpoint()
         pad_mode = self.pad_mode if self.time_pad < x.shape[2] else "constant"
-
+        #x的维度是(2,128,1,2)在这里报错了
         x = F.pad(x, self.time_causal_padding, mode=pad_mode)
         if x.dim() == 3:
             x = x.unsqueeze(1)  # B,1,7,9

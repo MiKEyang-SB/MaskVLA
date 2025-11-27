@@ -176,3 +176,5 @@ datasets.zip
 wandb
 LIBERO
 ckpt_vqvla
+experiments/logs
+outputs

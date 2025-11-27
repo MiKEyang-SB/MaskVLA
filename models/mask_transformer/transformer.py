@@ -681,6 +681,7 @@ class Mask_VLA_Agent(BaseModel):
                  num_tokens = 1024, #vq里面的值的大小 256
                  device = 'cuda',
                  opt=None, 
+                 eval=False,
                 #  mask_type='1D',
                 #  window_size=5,
                  **kargs):
@@ -731,13 +732,58 @@ class Mask_VLA_Agent(BaseModel):
 
         self.token_emb = nn.Embedding(_num_tokens, self.code_dim)#256+1,512
         #看一下vqvae输出的这个是不是1024啊
-        self.output_process = OutputProcess_adaLN(out_feats=_num_tokens, latent_dim=latent_dim)
+        self.output_process = OutputProcess_adaLN(out_feats=num_tokens, latent_dim=latent_dim)
 
         # self.clip_version = lang_clip_version
         # self.load_and_freeze_clip(lang_clip_version)
         
         self.noise_schedule = cosine_schedule
         self.noise_schedule_backward = cosine_schedule_backward
+
+        # Load checkpoint if in eval mode and checkpoint_path is provided in opt
+        self.is_eval = eval
+        if self.is_eval and hasattr(opt, 'vla_checkpoint') and opt.vla_checkpoint is not None:
+            self.load_checkpoint(opt.vla_checkpoint)
+
+    def load_checkpoint(self, checkpoint_path):
+        """
+        Load pretrained checkpoint for the MaskVLA model.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file
+        """
+        print(f"[*] Loading MaskVLA checkpoint from: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+
+        # Handle different checkpoint formats
+        if "model" in checkpoint:
+            state_dict = checkpoint["model"]
+        elif "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        else:
+            state_dict = checkpoint
+
+        # Remove 'module.' prefix if the model was trained with DDP
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            if k.startswith('module.'):
+                new_state_dict[k[7:]] = v  # Remove 'module.' prefix
+            else:
+                new_state_dict[k] = v
+
+        # Load state dict
+        missing_keys, unexpected_keys = self.load_state_dict(new_state_dict, strict=False)
+
+        if missing_keys:
+            print(f"[WARNING] Missing keys in checkpoint: {missing_keys}")
+        if unexpected_keys:
+            print(f"[WARNING] Unexpected keys in checkpoint: {unexpected_keys}")
+
+        print(f"[*] MaskVLA checkpoint loaded successfully")
+        if "epoch" in checkpoint:
+            print(f"    - Epoch: {checkpoint['epoch']}")
+        if "global_step" in checkpoint:
+            print(f"    - Global step: {checkpoint['global_step']}")
 
     # def load_and_freeze_clip(self, clip_version): #ViT-B/32
 
@@ -1039,15 +1085,16 @@ class Mask_VLA_Agent(BaseModel):
         cond = self.cond_encoder(cond)#(B, 2, 512)
         cond_vector = cond.mean(dim = 1)#(B, 512)
 
-        # padding_mask = ~lengths_to_mask(m_lens, seq_len) #这两个直接设
-        # padding_mask = padding_mask.repeat(1, self.nbp)
-        # padding_mask = torch.arange(max_len, device=lengths.device).repeat(len(lengths), 2) < lengths.unsqueeze(1)
-        padding_mask = torch.ones(
-            (batch_size, self.vq_action_dim, self.nbp),
+        # Create mask for valid tokens (all True means all tokens are valid, no padding)
+        # padding_mask: True for padding positions, False for valid positions
+        # Since we have no padding, all positions are valid, so padding_mask should be all False
+        padding_mask = torch.zeros(
+            (batch_size, self.vq_action_dim * self.nbp),
             device=cond.device,
             dtype=torch.bool
-        ).view(batch_size, -1)
-        #(B, 2*4) all True
+        )
+        #(B, vq_action_dim*nbp) all False (no padding)
+
         token_lengths = torch.full(
             (batch_size, ),
              self.vq_action_dim * self.nbp,
@@ -1055,8 +1102,9 @@ class Mask_VLA_Agent(BaseModel):
         )#(B,) all self.vq_action_dim * self.nbp
 
         # Start from all tokens being masked
+        # padding_mask is False for valid tokens, so they should be initialized as mask_id
         ids = torch.where(padding_mask, self.pad_id, self.mask_id)#True就选pad_id，False选mask_id
-        scores = torch.where(padding_mask, 1e5, 0.) #(B, 2*4)
+        scores = torch.where(padding_mask, 1e5, 0.) #(B, vq_action_dim*nbp)
         starting_temperature = temperature
 
         for timestep, steps_until_x0 in zip(torch.linspace(0, 1, timesteps, device=device), reversed(range(timesteps))):
@@ -1073,7 +1121,7 @@ class Mask_VLA_Agent(BaseModel):
             # select num_token_masked tokens with lowest scores to be masked
             sorted_indices = scores.argsort(dim=1)  # (b, k), sorted_indices[i, j] = the index of j-th lowest element in scores on dim=1
             ranks = sorted_indices.argsort(dim=1)  # (b, k)每个位置的排名
-            is_mask = (ranks < num_token_masked.unsqueeze(-1))
+            is_mask = (ranks < num_token_masked.unsqueeze(-1))#排名小于掩码数量的地方，is_mask的值都是True
             ids = torch.where(is_mask, self.mask_id, ids) #不确定的位置进行重采样
 
             '''
@@ -1083,9 +1131,9 @@ class Mask_VLA_Agent(BaseModel):
             logits = self.forward_with_cond_scale(ids, 
                                                   cond_vector=cond_vector,
                                                   cond_scale=cond_scale,
-                                                  force_mask=force_mask)    
-            #  logits = logits_cond + s*(logits_cond - logits_uncond)
-            logits = logits.permute(0, 2, 1)  # (b, seqlen, ntoken)
+                                                  force_mask=force_mask)   #这个维度错了 
+            #  logits = logits_cond + s*(logits_cond - logits_uncond) #(B,257,8)
+            logits = logits.permute(0, 2, 1)  # (b, seqlen, ntoken) #(B,8,257)
             
             # clean low prob token
             filtered_logits = top_k(logits, topk_filter_thres, dim=-1)

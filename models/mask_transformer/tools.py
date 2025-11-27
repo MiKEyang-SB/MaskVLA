@@ -105,7 +105,7 @@ def gumbel_sample(t, temperature = 1., dim = 1):
 #         [  -inf,   -inf, 0.6628,   -inf,   -inf,   -inf],
 #         [0.9428,   -inf,   -inf,   -inf,   -inf,   -inf]]
 def top_k(logits, thres = 0.9, dim = 1):
-    k = math.ceil((1 - thres) * logits.shape[dim])
+    k = math.ceil((1 - thres) * logits.shape[dim]) #保留前0.1*257
     val, ind = logits.topk(k, dim = dim)
     probs = torch.full_like(logits, float('-inf'))
     probs.scatter_(dim, ind, val)

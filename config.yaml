@@ -1,0 +1,83 @@
+image_sizes: 224
+
+# Directory Paths
+data_root_dir: "./datasets/LIBERO_RLDS"
+dataset_name: "libero_10_no_noops"
+
+# Model & Device Configuration
+vqvae_config_path: "models/vla_vq/action_vqvae_config"
+device: "cuda"
+
+# VQVAE Parameters
+window_size: 10
+image_window_size: 1
+vq_layer_group: 4
+n_latent_dims: 128
+checkpoint_path: "./checkpoints/action_tokenizer_weight/all_data_vq.pth"
+use_action_type_pe: true
+use_time_pe: true
+
+# Training Parameters
+SEED: 1
+wandb_enable: false
+wandb_name: "MaskVLA"
+world_size: 0
+local_rank: -1
+cuda_device: 0
+
+output_dir: "run/experiments/{:%H-%M-%S}/"
+batch_size: 256
+max_epochs: 50
+max_steps: 20000
+shuffle_buffer_size: 100000
+image_aug: true
+learning_rate: 2e-4
+gamma: 0.1
+gradient_accumulation_steps: 1
+grad_norm: 200
+bar_steps: 1
+log_steps: 10
+save_steps: 10000
+
+# Checkpoint
+checkpoint: null
+checkpoint_strict_load: false
+resume_training: false
+resume_encoder_only: false
+
+# VLA Parameters
+code_dim: 512
+latent_dim: 512
+img_latent_dim: 512
+ff_size: 2048
+num_layers: 6
+num_heads: 8
+dropout: 0.2
+cond_drop_prob: 0.1
+clip_version: "ViT-B/32"
+num_tokens: 256        # logits维度 / VQ codebook size
+mask_type: "1D"
+step_unroll: 1
+vq_action_dim: 4
+
+# Eval Parameters
+task_suite_name: "libero_10"
+num_steps_wait: 10
+num_trials_per_task: 50
+run_id_note: null
+local_log_dir: "./experiments/logs"
+seed: 7
+image_history_size: 1
+model_family: "maskvla"
+vla_checkpoint: "./run/experiments/16-37-57/ckpts/model_step_20001.pt"
+
+# Inference Parameters
+timesteps: 20           # Number of denoising steps for MaskGIT sampling
+cond_scale: 3           # Classifier-free guidance scale (>1 means stronger conditioning)
+temperature: 1.0        # Sampling temperature
+topk_filter_thres: 0.9  # Top-k filtering threshold
+gsample: false          # Whether to use Gumbel-Softmax sampling
+
+# Wandb for eval
+wandb_project: "MaskVLA_Eval"
+wandb_entity: "YOUR_WANDB_ENTITY"
