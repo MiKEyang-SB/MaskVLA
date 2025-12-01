@@ -1000,13 +1000,14 @@ class Mask_VLA_Agent(BaseModel):
         
         #trans_forward
         logits = self.trans_forward(x_ids, cond, force_mask)
-        ce_loss, pred_id, acc = cal_performance(logits, labels, ignore_index=self.mask_id)
+        ce_loss, pred_id, acc = cal_performance(logits, labels, ignore_index=self.mask_id, smoothing=self.opt.smoothing_loss)
         logits = logits.permute(0,2,1)
 
         if self.opt.step_unroll:
+            #容忍预测作为输入，减少rollout drift，也就是自回归累计误差
             su_ce_loss, su_pred_id, su_acc = self.step_unroll_forward(x_ids, mask_mid, labels, logits, cond, force_mask)
             loss = ce_loss + (self.opt.step_unroll * su_ce_loss)
-            acc = (acc + self.opt.step_unroll*su_acc)/2,
+            acc = (acc + self.opt.step_unroll*su_acc)/2
             return loss, acc, pred_id, su_pred_id, logits
         else:
             return ce_loss, acc, pred_id, None, logits
@@ -1037,7 +1038,7 @@ class Mask_VLA_Agent(BaseModel):
         x_ids = torch.where(retained_preds, pred_ids, prev_masked_ids)
 
         step_unroll_logits = self.trans_forward(x_ids, cond_vector, force_mask)
-        return cal_performance(step_unroll_logits, labels, ignore_index=self.mask_id)
+        return cal_performance(step_unroll_logits, labels, ignore_index=self.mask_id, smoothing=self.opt.smoothing_loss)
 
     def forward_with_cond_scale(self,
                                 discretized_action_ids,

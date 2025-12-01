@@ -1,0 +1,34 @@
+{
+    "sourceFile": "config.yaml",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 4,
+            "patches": [
+                {
+                    "date": 1764588992595,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1764588998930,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -29,9 +29,9 @@\n cuda_device: 0\n \n output_dir: \"run/experiments/{:%H-%M-%S}/\"\n batch_size: 16\n-max_epochs: 50\n+# max_epochs: 50\n max_steps: 30000\n shuffle_buffer_size: 100000\n image_aug: true\n learning_rate: 1e-4\n"
+                },
+                {
+                    "date": 1764590205866,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -20,9 +20,9 @@\n use_time_pe: true\n \n # Training Parameters\n SEED: 1\n-wandb_enable: true\n+wandb_enable: false\n wandb_name: \"MaskVLA\"\n world_size: 0\n local_rank: -1\n rank: 0\n"
+                },
+                {
+                    "date": 1764591968166,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -61,9 +61,9 @@\n num_tokens: 256        # logits维度 / VQ codebook size\n mask_type: \"1D\"\n step_unroll: 1\n vq_action_dim: 4\n-\n+smoothing_loss: 1\n # Eval Parameters\n task_suite_name: \"libero_10\"\n num_steps_wait: 10\n num_trials_per_task: 50\n"
+                },
+                {
+                    "date": 1764593513547,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -20,10 +20,11 @@\n use_time_pe: true\n \n # Training Parameters\n SEED: 1\n-wandb_enable: false\n+wandb_enable: true\n wandb_name: \"MaskVLA\"\n+wandb_account: \"910935770y@gmail.com\"\n world_size: 0\n local_rank: -1\n rank: 0\n cuda_device: 0\n"
+                }
+            ],
+            "date": 1764588992595,
+            "name": "Commit-0",
+            "content": "# image_sizes: (224,224)\nimage_sizes:\n  primary: [224, 224]\n\n# Directory Paths\ndata_root_dir: \"./datasets/LIBERO_RLDS\"\ndataset_name: \"libero_10_no_noops\"\n\n# Model & Device Configuration\nvqvae_config_path: \"models/vla_vq/action_vqvae_config\"\ndevice: \"cuda\"\n\n# VQVAE Parameters\nwindow_size: 10\nimage_window_size: 1\nvq_layer_group: 4\nn_latent_dims: 128\ncheckpoint_path: \"./checkpoints/action_tokenizer_weight/all_data_vq.pth\"\nuse_action_type_pe: true\nuse_time_pe: true\n\n# Training Parameters\nSEED: 1\nwandb_enable: true\nwandb_name: \"MaskVLA\"\nworld_size: 0\nlocal_rank: -1\nrank: 0\ncuda_device: 0\n\noutput_dir: \"run/experiments/{:%H-%M-%S}/\"\nbatch_size: 16\nmax_epochs: 50\nmax_steps: 30000\nshuffle_buffer_size: 100000\nimage_aug: true\nlearning_rate: 1e-4\ngamma: 0.1\ngradient_accumulation_steps: 1\ngrad_norm: 200\nbar_steps: 1\nlog_steps: 10\nsave_steps: 10000\n\n# Checkpoint\ncheckpoint: null\ncheckpoint_strict_load: false\nresume_training: false\nresume_encoder_only: false\n\n# VLA Parameters\ncode_dim: 512\nlatent_dim: 512\nimg_latent_dim: 512\nff_size: 2048\nnum_layers: 6\nnum_heads: 8\ndropout: 0.2\ncond_drop_prob: 0.1\nclip_version: \"ViT-B/32\"\nnum_tokens: 256        # logits维度 / VQ codebook size\nmask_type: \"1D\"\nstep_unroll: 1\nvq_action_dim: 4\n\n# Eval Parameters\ntask_suite_name: \"libero_10\"\nnum_steps_wait: 10\nnum_trials_per_task: 50\nrun_id_note: null\nlocal_log_dir: \"./experiments/logs\"\nseed: 7\nimage_history_size: 1\nmodel_family: \"maskvla\"\nvla_checkpoint: \"./run/experiments/16-37-57/ckpts/model_step_20001.pt\"\n\n# Inference Parameters\ntimesteps: 20           # Number of denoising steps for MaskGIT sampling\ncond_scale: 3           # Classifier-free guidance scale (>1 means stronger conditioning)\ntemperature: 1.0        # Sampling temperature\ntopk_filter_thres: 0.9  # Top-k filtering threshold\ngsample: false          # Whether to use Gumbel-Softmax sampling\n\n# Wandb for eval\nwandb_project: \"MaskVLA_Eval\"\nwandb_entity: \"YOUR_WANDB_ENTITY\"\n"
+        }
+    ]
+}

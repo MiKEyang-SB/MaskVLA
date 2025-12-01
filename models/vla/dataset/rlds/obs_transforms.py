@@ -48,6 +48,7 @@ def decode_and_resize(
     depth_resize_size: Union[Tuple[int, int], Dict[str, Tuple[int, int]]],
 ) -> Dict:
     """Decodes images and depth images, and then optionally resizes them."""
+    print("DEBUG resize_size type:", type(resize_size), "value:", resize_size)
     image_names = {key[6:] for key in obs if key.startswith("image_")}
     depth_names = {key[6:] for key in obs if key.startswith("depth_")}
 

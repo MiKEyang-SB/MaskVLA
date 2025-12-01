@@ -1,4 +1,6 @@
-image_sizes: 224
+# image_sizes: (224,224)
+image_sizes:
+  primary: [224, 224]
 
 # Directory Paths
 data_root_dir: "./datasets/LIBERO_RLDS"
@@ -19,19 +21,21 @@ use_time_pe: true
 
 # Training Parameters
 SEED: 1
-wandb_enable: false
+wandb_enable: true
 wandb_name: "MaskVLA"
+wandb_account: "910935770y@gmail.com"
 world_size: 0
 local_rank: -1
+rank: 0
 cuda_device: 0
 
 output_dir: "run/experiments/{:%H-%M-%S}/"
-batch_size: 256
-max_epochs: 50
-max_steps: 20000
+batch_size: 16
+# max_epochs: 50
+max_steps: 30000
 shuffle_buffer_size: 100000
 image_aug: true
-learning_rate: 2e-4
+learning_rate: 1e-4
 gamma: 0.1
 gradient_accumulation_steps: 1
 grad_norm: 200
@@ -59,7 +63,7 @@ num_tokens: 256        # logits维度 / VQ codebook size
 mask_type: "1D"
 step_unroll: 1
 vq_action_dim: 4
-
+smoothing_loss: 1
 # Eval Parameters
 task_suite_name: "libero_10"
 num_steps_wait: 10

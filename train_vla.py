@@ -30,6 +30,7 @@ from contextlib import nullcontext
 import tqdm
 from omegaconf import DictConfig, OmegaConf
 import hydra
+import time
 # @dataclass
 # class Config:
 #     # Model & Device Configuration
@@ -49,7 +50,7 @@ import hydra
 #     vq_layer_group: int = 4                                         # Number of VQ layer groups in VQVAE
 #     n_latent_dims: int = 128                                        # Latent dimension size for VQVAE encoding
 #     checkpoint_path: str = "./checkpoints/action_tokenizer_weight/all_data_vq.pth"  
-#     use_action_type_pe: bool = True  
+#     use_action_type_pe: bool = True  s
 #     use_time_pe: bool = True
 
 #     #traing Parameters
@@ -102,6 +103,16 @@ import hydra
 def train(config: DictConfig) -> None:
     default_gpu, n_gpu, device = setting(config)
     # device = torch.device(config.device)
+    if config.wandb_enable and default_gpu and hasattr(config, 'wandb_account'):
+        wandb.login(key=None, relogin=True)
+        os.environ['WANDB_USERNAME'] = config.wandb_account
+        time_id = f"{time.strftime('%m%d-%H')}"
+        wandb.init(
+            project="MaskVLA",
+            name=f"{config.wandb_name}-{time_id}",
+            config=OmegaConf.to_container(config, resolve=True),   # 记录所有超参
+            reinit=True,
+        )
     vla_vqvae_model = ActionVQVAELossWrapper(
         config.vqvae_config_path,
         model_dtype="bf16",  # For training, we used mixed training
@@ -154,7 +165,8 @@ def train(config: DictConfig) -> None:
         config.data_root_dir,
         config.dataset_name,
         batch_transform, #get_iter调用
-        resize_resolution=config.image_sizes,
+        # resize_resolution=config.image_sizes,
+        resize_resolution=OmegaConf.to_container(config.image_sizes, resolve=True),
         shuffle_buffer_size=config.shuffle_buffer_size, #100_000
         image_aug=config.image_aug,
         window_size=config.window_size,
@@ -192,7 +204,7 @@ def train(config: DictConfig) -> None:
         # pin_memory=True, 
     )
     len_train_dataloader = len(train_dataloader)
-    total_iters = len_train_dataloader * config.max_epochs
+    # total_iters = len_train_dataloader * config.max_epochs
     # LOGGER.info('-----dataset lens-------:', len_train_dataloader)
     # LOGGER.info("Model: nweights %d nparams %d" % (vla_model.num_parameters))#17,649,632个参数
     # LOGGER.info("Model: trainable nweights %d nparams %d" % (vla_model.num_trainable_parameters))
@@ -224,9 +236,9 @@ def train(config: DictConfig) -> None:
                             lr=config.learning_rate, 
                             weight_decay=1e-5)
     
-    milestones = [int(total_iters * 0.5), int(total_iters * 0.7), int(total_iters * 0.85)]
-    warm_up_iter = len_train_dataloader // 4
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
+    milestones = [int(config.max_steps * 0.5), int(config.max_steps * 0.7), int(config.max_steps * 0.85)]
+    # warm_up_iter = len_train_dataloader // 4
+    multistep_scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
                                                 milestones=milestones,
                                                 gamma=config.gamma)
     
@@ -244,57 +256,30 @@ def train(config: DictConfig) -> None:
 
     optimizer.zero_grad()
     running_metrics = {}
-    import time
-    # for epoch_id in range(restart_epoch, config.max_epochs):
-    #     pre_epoch(epoch_id)
     with tqdm.tqdm(total=config.max_steps, leave=False) as progress: #rlds格式数据集，在下面的循环里面永远不会结束，需要break结束，而且没有上层循环
-        for step, batch in enumerate(train_dataloader):
+        for batch_idx, batch in enumerate(train_dataloader):
             # torch.cuda.synchronize()
             # t0 = time.time()
-            need_sync = ((step + 1) % config.gradient_accumulation_steps == 0)
+            need_sync = ((batch_idx + 1) % config.gradient_accumulation_steps == 0)
             ddp_ctx = (vla_model.no_sync() if isinstance(vla_model, DDP) and not need_sync else nullcontext())
             with ddp_ctx:
                 with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
-                    # torch.cuda.synchronize()
-                    # t1 = time.time()
                     losses, acc, _, _, _ = vla_model(batch)
-                    # torch.cuda.synchronize()
-                    # t2 = time.time()
                 losses= losses / config.gradient_accumulation_steps
                 losses.backward() #to wandb
-                # torch.cuda.synchronize()
-                # t3 = time.time()
-            # if default_gpu and step % config.log_steps == 0:
-            #     print(
-            #         f"[Epoch {epoch_id} | Step {step}] "
-            #         f"data: {t1 - t0:.3f}s, fwd: {t2 - t1:.3f}s, bwd: {t3 - t2:.3f}s, total: {t3 - t0:.3f}s"
-            #     )
-            gradient_step_idx = step // config.gradient_accumulation_steps
 
-            if (step + 1) % config.gradient_accumulation_steps == 0:
+            gradient_step_idx = batch_idx // config.gradient_accumulation_steps
+
+            if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
                 global_step += 1
-                # learning rate scheduling
-                # lr_decay_rate = get_lr_sched_decay_rate(global_step, config.TRAIN)#学习率衰减
-                if step < warm_up_iter:
-                    current_lr = update_lr_warm_up(step,
-                                                   optimizer,
-                                                   warm_up_iter,
-                                                   config.learning_rate)
-                else:
-                    current_lr = optimizer.param_groups[0]["lr"]
-                # for kp, param_group in enumerate(optimizer.param_groups):
-                #     param_group['lr'] = lr_this_step = max(init_lrs[kp] * lr_decay_rate, 1e-5)
-
                 if config.grad_norm is not None:
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         vla_model.parameters(), config.grad_norm
                     )
-                    if config.wandb_enable and default_gpu:
-                        wandb_dict.update({'grad_norm': grad_norm})
 
                 # Update model parameters first
                 optimizer.step()
-                scheduler.step()
+                multistep_scheduler.step()
                 optimizer.zero_grad()
                 progress.update()
 
@@ -303,8 +288,9 @@ def train(config: DictConfig) -> None:
                     wandb_dict.update({
                         'loss': losses.item(),
                         'acc': acc,
-                        'lr': current_lr,
-                        'global_step': global_step})
+                        'lr': optimizer.param_groups[0]["lr"],
+                        'global_step': global_step,
+                        'grad_norm': grad_norm})
 
                 # Save checkpoint after parameter update
                 if global_step % config.save_steps == 0 and default_gpu:
@@ -312,15 +298,10 @@ def train(config: DictConfig) -> None:
                     model_saver.save(_to_save, global_step, optimizer=optimizer, rewrite_optimizer=True)
                     if torch.distributed.is_initialized():
                         torch.distributed.barrier()
-            # if global_step % config.bar_steps == 0:
-            #     pbar.update(config.bar_steps)#更新进度条
-
             if global_step % config.log_steps == 0 and config.wandb_enable and default_gpu:
                 wandb.log(wandb_dict) 
 
-
             if gradient_step_idx == config.max_steps:               
-                print(f"Max step {config.max_steps} reached! Stopping training...")
                 break
             
 

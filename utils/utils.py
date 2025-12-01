@@ -10,6 +10,7 @@ from utils.distributed import set_cuda
 import os
 import uuid
 import torch.distributed as dist
+from omegaconf import OmegaConf
 def print_current_loss(start_time, niter_state, total_niters, losses, epoch=None, sub_epoch=None,
                        inner_iter=None, tf_ratio=None, sl_steps=None):
 
@@ -65,14 +66,7 @@ def setting(config):
     if config.local_rank != -1:
         seed += config.rank
     set_random_seed(seed)
-    if config.wandb_enable and default_gpu:
-        time_id = f"{time.strftime('%m%d-%H')}"
-        wandb.init(
-            project="MaskVLA",
-            name=f"{config.wandb_name}-{time_id}",
-            config=vars(config),   # 记录所有超参
-            reinit=True,
-        )
+
     return default_gpu, n_gpu, device
 
 def load_checkpoint(config, len_train_dataloader, model):
