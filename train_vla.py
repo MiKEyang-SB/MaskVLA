@@ -102,6 +102,12 @@ import time
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def train(config: DictConfig) -> None:
     default_gpu, n_gpu, device = setting(config)
+
+    # Create output directory with timestamp
+    timestamp = datetime.now().strftime("%m%d-%H%M%S")
+    config.output_dir = os.path.join(config.output_dir, timestamp)
+    os.makedirs(config.output_dir, exist_ok=True)
+
     # device = torch.device(config.device)
     if config.wandb_enable and default_gpu:
         # Set wandb API key if provided in config
@@ -265,6 +271,7 @@ def train(config: DictConfig) -> None:
 
     optimizer.zero_grad()
     running_metrics = {}
+    accumulated_loss = 0.0  # Track accumulated loss for logging
     with tqdm.tqdm(total=config.max_steps, leave=False, disable=not default_gpu) as progress: #rlds格式数据集，在下面的循环里面永远不会结束，需要break结束，而且没有上层循环
         for batch_idx, batch in enumerate(train_dataloader):
             # torch.cuda.synchronize()
@@ -274,13 +281,17 @@ def train(config: DictConfig) -> None:
             with ddp_ctx:
                 with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
                     losses, acc, _, _, _ = vla_model(batch)
-                losses= losses / config.gradient_accumulation_steps
-                losses.backward() #to wandb
+                scaled_loss = losses / config.gradient_accumulation_steps
+                scaled_loss.backward()
 
-            gradient_step_idx = batch_idx // config.gradient_accumulation_steps
+                # Accumulate loss for logging
+                accumulated_loss += losses.item()
 
             if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
                 global_step += 1
+
+                # Gradient clipping
+                grad_norm = None
                 if config.grad_norm is not None:
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         vla_model.parameters(), config.grad_norm
@@ -293,14 +304,20 @@ def train(config: DictConfig) -> None:
                 if default_gpu:
                     progress.update()
 
-                # Log after parameter update
+                # Log after parameter update (average loss over accumulation steps)
                 if config.wandb_enable and default_gpu:
-                    wandb_dict.update({
-                        'loss': losses.item(),
+                    log_dict = {
+                        'loss': accumulated_loss / config.gradient_accumulation_steps,
                         'acc': acc,
                         'lr': optimizer.param_groups[0]["lr"],
-                        'global_step': global_step,
-                        'grad_norm': grad_norm})
+                        'global_step': global_step
+                    }
+                    if grad_norm is not None:
+                        log_dict['grad_norm'] = grad_norm
+                    wandb_dict.update(log_dict)
+
+                # Reset accumulated loss
+                accumulated_loss = 0.0
 
                 # Save checkpoint after parameter update
                 if global_step % config.save_steps == 0:
@@ -312,9 +329,10 @@ def train(config: DictConfig) -> None:
                         torch.distributed.barrier()
 
             if global_step % config.log_steps == 0 and config.wandb_enable and default_gpu:
-                wandb.log(wandb_dict) 
+                wandb.log(wandb_dict)
 
-            if gradient_step_idx == config.max_steps:               
+            # Check if we've reached max_steps
+            if global_step >= config.max_steps:
                 break
             
 

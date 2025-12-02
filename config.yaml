@@ -30,19 +30,19 @@ local_rank: -1
 rank: 0
 cuda_device: 0
 
-output_dir: "run/experiments/{:%H-%M-%S}/"
-batch_size: 16
+output_dir: "run/experiments/"  # Will be appended with timestamp in code
+batch_size: 32
 # max_epochs: 50
-max_steps: 30000
-shuffle_buffer_size: 100000
+max_steps: 10000
+shuffle_buffer_size: 200000
 image_aug: true
 learning_rate: 1e-4
 gamma: 0.1
-gradient_accumulation_steps: 1
+gradient_accumulation_steps: 2
 grad_norm: 200
 bar_steps: 1
 log_steps: 10
-save_steps: 10000
+save_steps: 5000
 
 # Learning Rate Scheduler Configuration
 lr_scheduler_type: "warmup"  # Options: "multistep" or "warmup"
