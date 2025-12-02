@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 4,
+            "activePatchIndex": 9,
             "patches": [
                 {
                     "date": 1764588992595,
@@ -24,6 +24,26 @@
                 {
                     "date": 1764593513547,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -20,10 +20,11 @@\n use_time_pe: true\n \n # Training Parameters\n SEED: 1\n-wandb_enable: false\n+wandb_enable: true\n wandb_name: \"MaskVLA\"\n+wandb_account: \"910935770y@gmail.com\"\n world_size: 0\n local_rank: -1\n rank: 0\n cuda_device: 0\n"
+                },
+                {
+                    "date": 1764595139450,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -42,8 +42,17 @@\n bar_steps: 1\n log_steps: 10\n save_steps: 10000\n \n+# Learning Rate Scheduler Configuration\n+lr_scheduler_type: \"warmup\"  # Options: \"multistep\" or \"warmup\"\n+# For multistep scheduler\n+milestones_ratios: [0.5, 0.7, 0.85]  # Ratios of max_steps for milestones\n+# For warmup scheduler\n+warmup_steps: 1000  # Number of warmup steps\n+warmup_start_lr: 1e-6  # Starting learning rate for warmup\n+min_lr: 1e-6  # Minimum learning rate after decay\n+\n # Checkpoint\n checkpoint: null\n checkpoint_strict_load: false\n resume_training: false\n@@ -62,9 +71,9 @@\n num_tokens: 256        # logits维度 / VQ codebook size\n mask_type: \"1D\"\n step_unroll: 1\n vq_action_dim: 4\n-smoothing_loss: 1\n+smoothing_loss: 0\n # Eval Parameters\n task_suite_name: \"libero_10\"\n num_steps_wait: 10\n num_trials_per_task: 50\n"
+                },
+                {
+                    "date": 1764595294120,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -71,9 +71,9 @@\n num_tokens: 256        # logits维度 / VQ codebook size\n mask_type: \"1D\"\n step_unroll: 1\n vq_action_dim: 4\n-smoothing_loss: 0\n+smoothing_loss: 0 #非常奇怪\n # Eval Parameters\n task_suite_name: \"libero_10\"\n num_steps_wait: 10\n num_trials_per_task: 50\n"
+                },
+                {
+                    "date": 1764596179599,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -23,8 +23,9 @@\n SEED: 1\n wandb_enable: true\n wandb_name: \"MaskVLA\"\n wandb_account: \"910935770y@gmail.com\"\n+wandb_api_key: \"094e127ee5170653b8268ce57ea06fe3a9b2fe38\"\n world_size: 0\n local_rank: -1\n rank: 0\n cuda_device: 0\n@@ -71,9 +72,9 @@\n num_tokens: 256        # logits维度 / VQ codebook size\n mask_type: \"1D\"\n step_unroll: 1\n vq_action_dim: 4\n-smoothing_loss: 0 #非常奇怪\n+smoothing_loss: 0 #非常奇怪，可能是代码有误\n # Eval Parameters\n task_suite_name: \"libero_10\"\n num_steps_wait: 10\n num_trials_per_task: 50\n"
+                },
+                {
+                    "date": 1764597248337,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -30,9 +30,9 @@\n rank: 0\n cuda_device: 0\n \n output_dir: \"run/experiments/{:%H-%M-%S}/\"\n-batch_size: 16\n+batch_size: 32\n # max_epochs: 50\n max_steps: 30000\n shuffle_buffer_size: 100000\n image_aug: true\n"
+                },
+                {
+                    "date": 1764597324599,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -30,9 +30,9 @@\n rank: 0\n cuda_device: 0\n \n output_dir: \"run/experiments/{:%H-%M-%S}/\"\n-batch_size: 32\n+batch_size: 16\n # max_epochs: 50\n max_steps: 30000\n shuffle_buffer_size: 100000\n image_aug: true\n"
                 }
             ],
             "date": 1764588992595,

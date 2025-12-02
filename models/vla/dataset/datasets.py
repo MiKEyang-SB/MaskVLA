@@ -435,7 +435,7 @@ class RLDSDataset(IterableDataset):
             ),
             frame_transform_kwargs=dict(
                 resize_size=resize_resolution,
-                num_parallel_calls=16,                          # For CPU-intensive ops (decoding, resizing, etc.)
+                num_parallel_calls=32,                          # For CPU-intensive ops (decoding, resizing, etc.)
             ),
             dataset_kwargs_list=per_dataset_kwargs,
             shuffle_buffer_size=shuffle_buffer_size,

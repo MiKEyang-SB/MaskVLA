@@ -24,6 +24,7 @@ SEED: 1
 wandb_enable: true
 wandb_name: "MaskVLA"
 wandb_account: "910935770y@gmail.com"
+wandb_api_key: "094e127ee5170653b8268ce57ea06fe3a9b2fe38"
 world_size: 0
 local_rank: -1
 rank: 0
@@ -42,6 +43,15 @@ grad_norm: 200
 bar_steps: 1
 log_steps: 10
 save_steps: 10000
+
+# Learning Rate Scheduler Configuration
+lr_scheduler_type: "warmup"  # Options: "multistep" or "warmup"
+# For multistep scheduler
+milestones_ratios: [0.5, 0.7, 0.85]  # Ratios of max_steps for milestones
+# For warmup scheduler
+warmup_steps: 1000  # Number of warmup steps
+warmup_start_lr: 1e-6  # Starting learning rate for warmup
+min_lr: 1e-6  # Minimum learning rate after decay
 
 # Checkpoint
 checkpoint: null
@@ -63,7 +73,7 @@ num_tokens: 256        # logits维度 / VQ codebook size
 mask_type: "1D"
 step_unroll: 1
 vq_action_dim: 4
-smoothing_loss: 1
+smoothing_loss: 0 #非常奇怪，可能是代码有误
 # Eval Parameters
 task_suite_name: "libero_10"
 num_steps_wait: 10

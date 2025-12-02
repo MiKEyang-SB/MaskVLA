@@ -23,7 +23,7 @@ from models.mask_transformer.transformer import Mask_VLA_Agent
 from utils.save import ModelSaver, save_training_meta
 from utils.misc import NoOp
 from utils.logger import LOGGER
-from utils.scheduler import update_lr_warm_up
+from utils.scheduler import update_lr_warm_up, get_scheduler
 from utils.utils import setting, load_checkpoint
 from datetime import datetime
 from contextlib import nullcontext
@@ -103,9 +103,15 @@ import time
 def train(config: DictConfig) -> None:
     default_gpu, n_gpu, device = setting(config)
     # device = torch.device(config.device)
-    if config.wandb_enable and default_gpu and hasattr(config, 'wandb_account'):
-        wandb.login(key=None, relogin=True)
-        os.environ['WANDB_USERNAME'] = config.wandb_account
+    if config.wandb_enable and default_gpu:
+        # Set wandb API key if provided in config
+        if hasattr(config, 'wandb_api_key') and config.wandb_api_key:
+            os.environ['WANDB_API_KEY'] = config.wandb_api_key
+            wandb.login(key=config.wandb_api_key, relogin=True)
+
+        if hasattr(config, 'wandb_account'):
+            os.environ['WANDB_USERNAME'] = config.wandb_account
+
         time_id = f"{time.strftime('%m%d-%H')}"
         wandb.init(
             project="MaskVLA",
@@ -113,6 +119,11 @@ def train(config: DictConfig) -> None:
             config=OmegaConf.to_container(config, resolve=True),   # 记录所有超参
             reinit=True,
         )
+
+    # Synchronize all processes after wandb initialization
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
     vla_vqvae_model = ActionVQVAELossWrapper(
         config.vqvae_config_path,
         model_dtype="bf16",  # For training, we used mixed training
@@ -231,16 +242,14 @@ def train(config: DictConfig) -> None:
     #------------------save----------------
         
 
-    optimizer = optim.AdamW(vla_model.parameters(), 
-                            betas=(0.9, 0.99), 
-                            lr=config.learning_rate, 
+    optimizer = optim.AdamW(vla_model.parameters(),
+                            betas=(0.9, 0.99),
+                            lr=config.learning_rate,
                             weight_decay=1e-5)
-    
-    milestones = [int(config.max_steps * 0.5), int(config.max_steps * 0.7), int(config.max_steps * 0.85)]
-    # warm_up_iter = len_train_dataloader // 4
-    multistep_scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
-                                                milestones=milestones,
-                                                gamma=config.gamma)
+
+    # Get scheduler based on config
+    lr_scheduler, scheduler_type = get_scheduler(config, optimizer)
+    LOGGER.info(f"Using {config.get('lr_scheduler_type', 'multistep')} learning rate scheduler")
     
 
     #分布式训练要看vqae的内容
@@ -256,7 +265,7 @@ def train(config: DictConfig) -> None:
 
     optimizer.zero_grad()
     running_metrics = {}
-    with tqdm.tqdm(total=config.max_steps, leave=False) as progress: #rlds格式数据集，在下面的循环里面永远不会结束，需要break结束，而且没有上层循环
+    with tqdm.tqdm(total=config.max_steps, leave=False, disable=not default_gpu) as progress: #rlds格式数据集，在下面的循环里面永远不会结束，需要break结束，而且没有上层循环
         for batch_idx, batch in enumerate(train_dataloader):
             # torch.cuda.synchronize()
             # t0 = time.time()
@@ -279,9 +288,10 @@ def train(config: DictConfig) -> None:
 
                 # Update model parameters first
                 optimizer.step()
-                multistep_scheduler.step()
+                lr_scheduler.step()
                 optimizer.zero_grad()
-                progress.update()
+                if default_gpu:
+                    progress.update()
 
                 # Log after parameter update
                 if config.wandb_enable and default_gpu:
@@ -293,11 +303,14 @@ def train(config: DictConfig) -> None:
                         'grad_norm': grad_norm})
 
                 # Save checkpoint after parameter update
-                if global_step % config.save_steps == 0 and default_gpu:
-                    _to_save = vla_model.module if isinstance(vla_model, DDP) else vla_model
-                    model_saver.save(_to_save, global_step, optimizer=optimizer, rewrite_optimizer=True)
+                if global_step % config.save_steps == 0:
+                    if default_gpu:
+                        _to_save = vla_model.module if isinstance(vla_model, DDP) else vla_model
+                        model_saver.save(_to_save, global_step, optimizer=optimizer, rewrite_optimizer=True)
+
                     if torch.distributed.is_initialized():
                         torch.distributed.barrier()
+
             if global_step % config.log_steps == 0 and config.wandb_enable and default_gpu:
                 wandb.log(wandb_dict) 
 
