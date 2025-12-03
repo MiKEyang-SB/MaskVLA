@@ -54,9 +54,22 @@ def resize_image(img, resize_size):
 
 def get_libero_image(obs, resize_size):
     """Extracts image from observations and preprocesses it."""
-    assert isinstance(resize_size, int) or isinstance(resize_size, tuple)
-    if isinstance(resize_size, int):
+    # Handle OmegaConf DictConfig or dict format from config (e.g., {"primary": [224, 224]})
+    if hasattr(resize_size, '__getitem__') and hasattr(resize_size, 'keys'):
+        # This handles both dict and DictConfig
+        if "primary" in resize_size:
+            resize_size = resize_size["primary"]
+        else:
+            resize_size = [224, 224]
+
+    # Handle list, int, or tuple
+    if isinstance(resize_size, list):
+        resize_size = tuple(resize_size)
+    elif isinstance(resize_size, int):
         resize_size = (resize_size, resize_size)
+
+    assert isinstance(resize_size, tuple), f"resize_size must be convertible to tuple, got {type(resize_size)}"
+
     img = obs["agentview_image"]
     img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
     img = resize_image(img, resize_size)

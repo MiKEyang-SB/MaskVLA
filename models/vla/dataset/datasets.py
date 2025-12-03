@@ -179,6 +179,8 @@ class RLDSBatchTransform:
     
     # action_tokenizer: VQVAEActionTokenizer
     vqvae_model: ActionVQVAELossWrapper
+    if_vqvae: int = 1
+    baseTokenizer = ActionTokenizer
     image_window_size: int = 1
     image_transform: Any = None
     # image_transform: ImageTransform #这个要去大模型里面找
@@ -210,12 +212,14 @@ class RLDSBatchTransform:
         img_tensor = self.image_transform(img_tensor.unsqueeze(0))#注意这里是不是/255的
 
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
-
-        action1 = action[:5, :]
-        action2 = action[5:, :]
-        discretized_action1 = self.vqvae_model.get_code(action1)#(1, 4)
-        discretized_action2 = self.vqvae_model.get_code(action2)#(1, 4)
-        discretized_action = torch.cat([discretized_action1, discretized_action2], dim = 0)
+        if self.if_vqvae:
+            action1 = action[:5, :]
+            action2 = action[5:, :]
+            discretized_action1 = self.vqvae_model.get_code(action1)#(1, 4)
+            discretized_action2 = self.vqvae_model.get_code(action2)#(1, 4)
+            discretized_action = torch.cat([discretized_action1, discretized_action2], dim = 0)
+        else: #baseTokenizer
+            discretized_action = self.baseTokenizer(action) #base_tokenizer
         # discretized_action = self.vqvae_model.get_code(action) #(1,4)
         # discretized_action = discretized_action.to('cpu') #for pin_memory
         return dict(

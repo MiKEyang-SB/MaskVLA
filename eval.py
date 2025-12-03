@@ -166,7 +166,7 @@ def eval_libero(config: DictConfig) -> None:
         env, task_description = get_libero_env(task, vla_model, resolution=256)
         # Start episodes
         task_episodes, task_successes = 0, 0
-        for episode_idx in tqdm.tqdm(range(config.num_trials_per_task)):
+        for episode_idx in tqdm.tqdm(range(config.num_trials_per_task)):#50
             print(f"\nTask: {task_description}")
             log_file.write(f"\nTask: {task_description}\n")
 
@@ -197,7 +197,7 @@ def eval_libero(config: DictConfig) -> None:
                     obs, reward, done, info = env.step(get_libero_dummy_action(config.model_family))
                     t += 1
                     continue
-                img = get_libero_image(obs, resize_size)
+                img = get_libero_image(obs, 224)
                 replay_images.append(img)
                 img_history = replay_images[-config.image_history_size :]
                 if len(img_history) < config.image_history_size:
@@ -218,25 +218,25 @@ def eval_libero(config: DictConfig) -> None:
 
                 # Debug: Save observation image and print language instruction
                 # if t == config.num_steps_wait:  # Save first frame after wait period
-                debug_dir = os.path.join(config.local_log_dir, "debug_observations")
-                os.makedirs(debug_dir, exist_ok=True)
+                # debug_dir = os.path.join(config.local_log_dir, "debug_observations")
+                # os.makedirs(debug_dir, exist_ok=True)
 
                 # Save original image (before normalization)
-                img_pil = Image.fromarray(img_np.astype(np.uint8))
-                img_save_path = os.path.join(debug_dir, f"episode_{total_episodes+1}_step_{t}_task_{task_id}.png")
-                img_pil.save(img_save_path)
+                # img_pil = Image.fromarray(img_np.astype(np.uint8))
+                # img_save_path = os.path.join(debug_dir, f"episode_{total_episodes+1}_step_{t}_task_{task_id}.png")
+                # img_pil.save(img_save_path)
 
                 # Print and log language instruction
-                print(f"[DEBUG] Saved observation image to: {img_save_path}")
-                print(f"[DEBUG] Language instruction: {observation['lang']}")
-                log_file.write(f"[DEBUG] Episode {total_episodes+1}, Step {t}\n")
-                log_file.write(f"[DEBUG] Image saved: {img_save_path}\n")
-                log_file.write(f"[DEBUG] Language: {observation['lang']}\n")
-                log_file.flush()
+                # print(f"[DEBUG] Saved observation image to: {img_save_path}")
+                # print(f"[DEBUG] Language instruction: {observation['lang']}")
+                # log_file.write(f"[DEBUG] Episode {total_episodes+1}, Step {t}\n")
+                # log_file.write(f"[DEBUG] Image saved: {img_save_path}\n")
+                # log_file.write(f"[DEBUG] Language: {observation['lang']}\n")
+                # log_file.flush()
 
                 #action
-                if t == 150:
-                    pass
+                # if t == 150:
+                #     pass
                 actions = get_action( #这一步是怎么回归的
                     config,
                     vla_vqvae_model,
@@ -244,6 +244,8 @@ def eval_libero(config: DictConfig) -> None:
                     observation,
                 )#t到了150就报错
 
+                actions = normalize_gripper_action(actions, binarize=True)  # 1,10,7
+                actions = invert_gripper_action(actions)
                 # breakpoint()
                 # Execute action in environment
                 for action in actions[0].tolist():

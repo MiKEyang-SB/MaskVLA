@@ -147,7 +147,7 @@ class ActionVQVAE(ModelMixin, ConfigMixin):
         h: torch.Tensor,
         robot_type=None,
         frequency=None,
-        force_not_quantize: bool = False,
+        force_not_quantize: bool = False,RLDSBatchTransform
         return_dict: bool = True,
         shape=None,
     ) -> Union[DecoderOutput, torch.Tensor]:

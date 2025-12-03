@@ -18,10 +18,11 @@ n_latent_dims: 128
 checkpoint_path: "./checkpoints/action_tokenizer_weight/all_data_vq.pth"
 use_action_type_pe: true
 use_time_pe: true
+use_vqvae_tokenizer: true  # If false, use simple action tokenizer without VQ-VAE encoding
 
 # Training Parameters
 SEED: 1
-wandb_enable: true
+wandb_enable: false
 wandb_name: "MaskVLA"
 wandb_account: "910935770y@gmail.com"
 wandb_api_key: "094e127ee5170653b8268ce57ea06fe3a9b2fe38"
@@ -74,6 +75,7 @@ mask_type: "1D"
 step_unroll: 1
 vq_action_dim: 4
 smoothing_loss: 0 #非常奇怪，可能是代码有误
+if_vqvae: 1
 # Eval Parameters
 task_suite_name: "libero_10"
 num_steps_wait: 10
@@ -83,7 +85,7 @@ local_log_dir: "./experiments/logs"
 seed: 7
 image_history_size: 1
 model_family: "maskvla"
-vla_checkpoint: "./run/experiments/16-37-57/ckpts/model_step_20001.pt"
+vla_checkpoint: "./run/experiments/1201-2100/ckpts/model_step_10000.pt"
 
 # Inference Parameters
 timesteps: 20           # Number of denoising steps for MaskGIT sampling

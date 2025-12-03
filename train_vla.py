@@ -29,6 +29,7 @@ from datetime import datetime
 from contextlib import nullcontext
 import tqdm
 from omegaconf import DictConfig, OmegaConf
+from models.vla.action_tokenizer import ActionTokenizer
 import hydra
 import time
 # @dataclass
@@ -174,9 +175,13 @@ def train(config: DictConfig) -> None:
     # vla_vqvae_model.to(device)
     # vla_model.to(device)
 
+    #这里改成普通的tokenizer
     batch_transform = RLDSBatchTransform(
-        vqvae_model = vla_vqvae_model
+        vqvae_model = vla_vqvae_model,
+        if_vqvae = config.if_vqvae,
+        baseTokenizer = ActionTokenizer
     )
+
     #code_idx1, _ = self.vq_model.encode(motion1) 其实这样子就行了
     vla_dataset = RLDSDataset(
         config.data_root_dir,
